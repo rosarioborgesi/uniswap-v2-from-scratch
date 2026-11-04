@@ -62,6 +62,32 @@ contract UQ112x112UnitTest is Test {
         uint112 denominator = 70;
         uint224 result = UQ112x112.uqdiv(UQ112x112.encode(numerator), denominator);
 
+        // Let's see different representations of result.
         assertEq(result, uint256(123) * Q112 / 70);
+
+        // Multiply BEFORE dividing by Q112 to keep decimal places.
+        // With 2 decimal places: 175 represents 1.75 (truncated).
+        assertEq(uint256(result) * 100 / Q112, 175);
+
+        // With 18 decimal places, place the decimal point 18 digits from the right:
+        // 1757142857142857142 represents 1.757142857142857142.
+        // Cast to uint256 before multiplication to give the calculation room.
+        assertEq(uint256(result) * 1e18 / Q112, 1_757_142_857_142_857_142);
+    }
+
+    function test_OneHundredTwentyThreePointSevenFiveDividedByTwentyPointNineEight() public pure {
+        // Calculate 123.75 / 20.98 = 5,898474737845567206...
+        // Scale both decimals by 100: 123.75 / 20.98 = 12375 / 2098.
+        uint112 numerator = 12375;
+        uint112 denominator = 2098;
+        uint224 result = UQ112x112.uqdiv(UQ112x112.encode(numerator), denominator);
+
+        assertEq(result, uint256(12375) * Q112 / 2098);
+
+        // Scale the quotient by 1_000_000, keeping six decimal places 
+        assertEq(uint256(result) * 1_000_000 / Q112, 5_898_474);
+
+        // Scale the quotient by 1e18, keeping eighteen decimal places.
+        assertEq(uint256(result) * 1e18 / Q112, 5_898_474_737_845_567_206);
     }
 }
