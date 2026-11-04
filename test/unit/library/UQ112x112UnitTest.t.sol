@@ -45,7 +45,7 @@ contract UQ112x112UnitTest is Test {
 
         // 2.5 consists of a whole part (2) and a fractional part (0.5).
         assertEq(result, 2 * Q112 + Q112 / 2);
-    }    
+    }
 
     function test_OneDividedByThreeRoundsDown() public pure {
         uint224 result = UQ112x112.uqdiv(UQ112x112.encode(1), 3);
@@ -58,19 +58,10 @@ contract UQ112x112UnitTest is Test {
 
     function test_DivideTwoDecimalNumbersWithManyResultDecimals() public pure {
         // Calculate 1.23 / 0.70 = 1.757142857142857142...
-        // Express BOTH inputs in hundredths: 123 / 70 is the same ratio.
-        // encode() accepts whole numbers, so encode 123, not 1.23.
         uint112 numerator = 123;
         uint112 denominator = 70;
         uint224 result = UQ112x112.uqdiv(UQ112x112.encode(numerator), denominator);
 
-        // Multiply BEFORE dividing by Q112 to keep decimal places.
-        // With 2 decimal places: 175 represents 1.75 (truncated).
-        assertEq(uint256(result) * 100 / Q112, 175);
-
-        // With 18 decimal places, place the decimal point 18 digits from the right:
-        // 1757142857142857142 represents 1.757142857142857142.
-        // Cast to uint256 before multiplication to give the calculation room.
-        assertEq(uint256(result) * 1e18 / Q112, 1_757_142_857_142_857_142);
+        assertEq(result, uint256(123) * Q112 / 70);
     }
 }
