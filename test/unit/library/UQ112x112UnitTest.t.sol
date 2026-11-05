@@ -84,7 +84,7 @@ contract UQ112x112UnitTest is Test {
 
         assertEq(result, uint256(12375) * Q112 / 2098);
 
-        // Scale the quotient by 1_000_000, keeping six decimal places 
+        // Scale the quotient by 1_000_000, keeping six decimal places
         assertEq(uint256(result) * 1_000_000 / Q112, 5_898_474);
 
         // Scale the quotient by 1e18, keeping eighteen decimal places.

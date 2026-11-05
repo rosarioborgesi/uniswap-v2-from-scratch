@@ -20,10 +20,11 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     address public token0;
     address public token1;
 
-    // Stores the two reserves and a timestamp in a single slot,. Accessible via getReserves
-    uint112 private reserve0;
-    uint112 private reserve1;
-    uint32 private blockTimestampLast;
+    // Stores the two reserves and a timestamp in a single slot (112 + 112 + 32 = 256 bit).
+    // They are updated by the _update function. So they are updated when: mint, burn, swap or sync are called
+    uint112 private reserve0; // Stored snapshot of token0 balance 
+    uint112 private reserve1; // Stored snapshot of token1 balance
+    uint32 private blockTimestampLast; // block.timestamp of the latest _update call % 2**32
 
     uint256 public price0CumulativeLast;
     uint256 public price1CumulativeLast;
@@ -83,10 +84,10 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     // ============ Reserve Update ============
 
     /// @dev Update reserves and, on the first call of each block, accumulate price.
-    /// @param balance0 Current balance of token0 in the pair
-    /// @param balance1 Current balance of token1 in the pair
-    /// @param _reserve0 Previous reserve of token0 (from storage)
-    /// @param _reserve1 Previous reserve of token1 (from storage)
+    /// @param balance0 Current balance of token0 in the pair -> IERC20(token0).balanceOf(address(this))
+    /// @param balance1 Current balance of token1 in the pair -> IERC20(token1).balanceOf(address(this))
+    /// @param _reserve0 Previous reserve of token0 (from storage) -> this is updated by _update
+    /// @param _reserve1 Previous reserve of token1 (from storage) -> this is updated by _update
     function _update(uint256 balance0, uint256 balance1, uint112 _reserve0, uint112 _reserve1) internal {
         // Require balance0 and balance1 each fit in uint112
         require(balance0 <= type(uint112).max && balance1 <= type(uint112).max, "UniswapV2: OVERFLOW");
@@ -102,6 +103,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         }
 
         // If timeElapsed > 0 AND both reserves are nonzero, accumulate prices
+        // _reserve0 and _reserve1 must not be zero otherwise we would be dividing for zero.
         if (timeElapsed > 0 && _reserve0 != 0 && _reserve1 != 0) {
             // Use an unchecked block because overflow is intentional:
             unchecked {
