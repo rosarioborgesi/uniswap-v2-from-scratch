@@ -1,20 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
-interface IUniswapV2ERC20 {
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    event Transfer(address indexed from, address indexed to, uint256 value);
+import {IERC20} from "./IERC20.sol";
 
-    function name() external pure returns (string memory);
-    function symbol() external pure returns (string memory);
-    function decimals() external pure returns (uint8);
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address owner) external view returns (uint256);
-    function allowance(address owner, address spender) external view returns (uint256);
-
-    function approve(address spender, uint256 value) external returns (bool);
-    function transfer(address to, uint256 value) external returns (bool);
-    function transferFrom(address from, address to, uint256 value) external returns (bool);
+// Includes the complete EIP-2612 interface
+interface IUniswapV2ERC20 is IERC20 {
+    function name() external pure override returns (string memory);
+    function symbol() external pure override returns (string memory);
+    function decimals() external pure override returns (uint8);
 
     function DOMAIN_SEPARATOR() external view returns (bytes32);
     function PERMIT_TYPEHASH() external pure returns (bytes32);

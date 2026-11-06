@@ -3,7 +3,10 @@ pragma solidity 0.8.35;
 
 import {IUniswapV2Pair} from "./interfaces/IUniswapV2Pair.sol";
 import {UniswapV2ERC20} from "./UniswapV2ERC20.sol";
+import {IERC20} from "./interfaces/IERC20.sol";
+import {IUniswapV2Factory} from "./interfaces/IUniswapV2Factory.sol";
 import {UQ112x112} from "./libraries/UQ112x112.sol";
+import {Math} from "./libraries/Math.sol";
 
 /// @title UniswapV2Pair — State and Initialization
 /// @notice Core AMM pair contract. Inherits the LP token (UniswapV2ERC20).
@@ -123,12 +126,98 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         emit Sync(reserve0, reserve1);
     }
 
-    function burn(address to) external returns (uint256 amount0, uint256 amount1) {
-        return (uint256(0), uint256(0));
+
+    // ============ Protocol Fee ============
+
+    /// @dev If fees are enabled, mint LP tokens representing one-sixth of the growth in sqrt(k).
+    /// @param _reserve0 Reserve of token0 before the current liquidity event
+    /// @param _reserve1 Reserve of token1 before the current liquidity event
+    /// @return feeOn Whether the factory has enabled protocol fees
+    function _mintFee(uint112 _reserve0, uint112 _reserve1) internal returns (bool feeOn) {
+        address feeTo = IUniswapV2Factory(factory).feeTo();
+        feeOn = feeTo != address(0);
+        uint256 _kLast = kLast;
+
+        if (feeOn) {
+            if (_kLast != 0) {
+                // Widen before multiplying; Solidity 0.8 checks arithmetic for overflow.
+                uint256 rootK = Math.sqrt(uint256(_reserve0) * _reserve1);
+                uint256 rootKLast = Math.sqrt(_kLast);
+                if (rootK > rootKLast) {
+                    uint256 numerator = totalSupply * (rootK - rootKLast);
+                    uint256 denominator = rootK * 5 + rootKLast;
+                    uint256 liquidity = numerator / denominator;
+                    if (liquidity > 0) _mint(feeTo, liquidity);
+                }
+            }
+        } else if (_kLast != 0) {
+            kLast = 0;
+        }
     }
 
-    function mint(address to) external returns (uint256 liquidity) {
-        return uint256(0);
+    // ============ Mint Function ============
+
+    /// @notice Mints LP tokens to `to`. Tokens must be transferred to the pair before calling.
+    /// @param to The address to receive LP tokens
+    /// @return liquidity The amount of LP tokens minted
+    function mint(address to) external lock returns (uint256 liquidity) {
+        // Important distinction
+        // - Reserves are the balances recorded during the previous update
+        // - Balances are the tokens the pair actually holds now.
+
+        // 1. Calculate how much was deposited
+        // Read current reserves
+        (uint112 _reserve0, uint112 _reserve1, ) = getReserves();
+
+        // Read actual token balances of this contract
+        uint256 balance0 = IERC20(token0).balanceOf(address(this));
+        uint256 balance1 = IERC20(token1).balanceOf(address(this));
+
+        // Calculate amounts deposited
+        uint256 amount0 = balance0 - _reserve0;
+        uint256 amount1 = balance1 - _reserve1;
+
+        // 2. Settle any protocol fee
+        // May mint LP tokens to the factory’s feeTo address,
+        bool feeOn = _mintFee(_reserve0, _reserve1);
+
+        // Read totalSupply AFTER _mintFee (it may have changed totalSupply)
+        uint256 _totalSupply = totalSupply;
+
+        // 3. Calculate the depositor’s LP tokens
+        if(_totalSupply == 0) {
+        // First deposit
+            liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
+            _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock minimum, this makes share inflation attacks more expensive.
+        }
+        else {
+            // Subsequent deposits
+            liquidity = Math.min(
+                amount0 * _totalSupply / _reserve0,
+                amount1 * _totalSupply / _reserve1
+            );
+        }
+
+        // 4. Mint and record the new state
+        require(liquidity > 0, "UniswapV2: INSUFFICIENT_LIQUIDITY_MINTED");
+
+        // Mint LP tokens to the recipient (increases LP totalSupply and balanceOf[to])
+        _mint(to, liquidity);
+
+        // _update records the new reserves and updates the cumulative price accounting. 
+        _update(balance0, balance1, _reserve0, _reserve1);
+
+        // If protocol fees are enabled, kLast is then set to the new reserve product 
+        // as the baseline for future fee calculations.
+        if(feeOn) {
+            kLast = uint256(reserve0) * reserve1;
+        }
+
+        emit Mint(msg.sender, amount0, amount1);
+    }
+
+    function burn(address to) external returns (uint256 amount0, uint256 amount1) {
+        return (uint256(0), uint256(0));
     }
 
     function skim(address to) external {}
