@@ -98,6 +98,7 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
         external
     {
         require(deadline >= block.timestamp, "UniswapV2: EXPIRED");
+        // Compute the EIP712 digest
         bytes32 digest = keccak256(
             abi.encodePacked(
                 "\x19\x01",
