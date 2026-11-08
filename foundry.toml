@@ -5,3 +5,17 @@ libs = ["lib"]
 solc = "0.8.35"
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+
+[lint]
+exclude_lints = [
+    "mixed-case-function",
+    "unwrapped-modifier-logic",
+    "unsafe-typecast",
+    "unaliased-plain-import",
+    "screaming-snake-case-immutable",
+    "erc20-unchecked-transfer",
+    "screaming-snake-case-const",
+    "mixed-case-variable",
+    "divide-before-multiply",
+    "asm-keccak256",
+]

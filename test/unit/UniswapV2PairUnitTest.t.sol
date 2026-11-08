@@ -30,8 +30,8 @@ contract UniswapV2PairUnitTest is Test {
     function setUp() public {
         feeTo = protocol;
         pair = new UniswapV2PairHarness();
-        token0 = new MockERC20(address(this), 1_000_000);
-        token1 = new MockERC20(address(this), 1_000_000);
+        token0 = new MockERC20(address(this), 1_000_000, 18);
+        token1 = new MockERC20(address(this), 1_000_000, 18);
         pair.initialize(address(token0), address(token1));
     }
 
@@ -39,7 +39,7 @@ contract UniswapV2PairUnitTest is Test {
     //            _safeTransfer          //
     ///////////////////////////////////////
     function test_SafeTransferCanTransferERC20() public {
-        MockERC20 token = new MockERC20(address(pair), 100);
+        MockERC20 token = new MockERC20(address(pair), 100, 18);
 
         pair.safeTransfer(address(token), recipient, 40);
 
