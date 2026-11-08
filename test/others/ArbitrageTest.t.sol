@@ -7,6 +7,7 @@ import {UniswapV2Router02} from "../../src/v2-periphery/UniswapV2Router02.sol";
 import {UniswapV2Library} from "../../src/v2-periphery/libraries/UniswapV2Library.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockCEX} from "../mocks/MockCEX.sol";
+import {Math} from "../../src/v2-core/libraries/Math.sol";
 
 contract ArbitrageTest is Test {
     MockERC20 weth;
@@ -21,9 +22,11 @@ contract ArbitrageTest is Test {
     uint256 constant INITIAL_USDC_RESERVE = 200_000 * 1e6;
     uint256 constant INITIAL_CEX_USDC_BALANCE = 100_000 * 1e6;
 
+    uint256 constant INITIAL_ARBITRAGEUR_USDC_BALANCE = 50_000 * 1e6;
+
     function setUp() public {
         weth = new MockERC20(address(this), 100 ether, 18);
-        usdc = new MockERC20(address(this), 310_000 * 1e6, 6);
+        usdc = new MockERC20(address(this), 350_000 * 1e6, 6);
         UniswapV2Factory factory = new UniswapV2Factory(address(this));
         router = new UniswapV2Router02(address(factory), address(weth));
         cex = new MockCEX(weth, usdc, CEX_PRICE);
@@ -32,8 +35,8 @@ contract ArbitrageTest is Test {
         // The liquidity provider receives: 100 WETH and 200,000 USDC
         weth.transfer(liquidityProvider, INITIAL_WETH_RESERVE);
         usdc.transfer(liquidityProvider, INITIAL_USDC_RESERVE);
-        // The arbitrageur receives 10,000 USDC
-        usdc.transfer(arbitrageur, 10_000 * 1e6);
+        // Give the arbitrageur enough capital to bring the DEX price to the CEX price.
+        usdc.transfer(arbitrageur, INITIAL_ARBITRAGEUR_USDC_BALANCE);
 
         // The liquidity provider deposits 100 WETH and 200,000 USDC
         // The initial pool price is: 200,000 USDC / 100 WETH = 2,000 USDC per WETH
@@ -53,33 +56,34 @@ contract ArbitrageTest is Test {
         vm.stopPrank();
     }
 
-    /*
-        1. Price difference: 1 WETH is worth 3,000 USDC on the CEX, while the DEX pool’s initial price is 2,000 USDC/WETH.
-        2. Buy on the DEX: The arbitrageur spends 10,000 USDC and receives 4.748297375815592703 WETH.
-        3. Sell on the CEX: The arbitrageur sells all that WETH at 3,000 USDC/WETH and receives 14,244.892127 USDC.
-        4. Profit: 14,244.892127 − 10,000 = 4,244.892127 USDC.
-        5. Final state: The DEX pool price has risen to approximately 2,204.685 USDC/WETH.
-    */
+    // This test demonstrates arbitrage between a CEX price of 3,000 USDC per WETH
+    // and an initial DEX reserve-ratio price of 2,000 USDC per WETH.
+    // The arbitrageur buys WETH on the DEX, raising its reserve-ratio price to 3,000,
+    // then sells the purchased WETH on the CEX for a profit of 9,966.983303 USDC,
+    // after the DEX swap fee and excluding gas and CEX fees.
     function test_doArbitrage() public {
-        // 1. Verifies that the initial ETH price in the Pool is 2,000 USDC
+        // 1. Verify that the initial pool reserve-ratio price is 2,000 USDC per WETH.
         (uint256 wethReserve, uint256 usdcReserve) =
             UniswapV2Library.getReserves(router.factory(), address(weth), address(usdc));
         uint256 initialPrice = router.quote(1 ether, wethReserve, usdcReserve);
         assertEq(initialPrice, 2_000 * 1e6);
 
-        // 2. Calculates how much WETH the arbitrageur receives for 10,000 USDC,
-        // including the pool’s 0.3% fee and price impact:
-        // WETH out = (10,000 × 0.997 × 100) / (200,000 + 10,000 × 0.997)
-        //          ≈ 4.748297375815592703 WETH
-        uint256 depositedUsdc = 10_000 * 1e6;
+        // 2. Calculate how much USDC the arbitrageur must deposit 
+        // to bring the ratio USDC / WETH = 3,000 USDC
+        uint256 discriminant =
+            9 * usdcReserve * usdcReserve + 4 * 997 * 1000 * CEX_PRICE * wethReserve * usdcReserve / 1 ether;
+        // Round up to the next micro-USDC so the reserve ratio reaches the target.
+        uint256 depositedUsdc = (Math.sqrt(discriminant) - 1997 * usdcReserve) / 1994 + 1; // 45,016.508349 USDC
+
         address[] memory path = new address[](2);
         path[0] = address(usdc);
         path[1] = address(weth);
         uint256[] memory quote = router.getAmountsOut(depositedUsdc, path);
 
         // 3. Execute and verify the purchase
+        // The arbitrageur deposits 45,016.508349 USDC and receives 18.327830550951836598 WETH
         vm.startPrank(arbitrageur);
-        // Router transfers approved USDC directly into the pair; pair sends WETH to us.
+        // Router transfers approved USDC into the pair; pair sends WETH to the arbitrageur.
         usdc.approve(address(router), depositedUsdc);
         router.swapExactTokensForTokens(depositedUsdc, quote[1], path, arbitrageur, block.timestamp);
         vm.stopPrank();
@@ -87,43 +91,41 @@ contract ArbitrageTest is Test {
         // Independently apply the 0.3% fee and constant-product output formula.
         uint256 expectedWeth =
             depositedUsdc * 997 * INITIAL_WETH_RESERVE / (INITIAL_USDC_RESERVE * 1000 + depositedUsdc * 997);
-        assertEq(wethBought, expectedWeth); // 4.748297375815592703 WETH
+        assertEq(wethBought, expectedWeth); //  18.327830550951836598 WETH
 
-        // Reserve	Before	     After
-        // WETH 	100	         95.2517
-        // USDC	    200,000	     210,000
+        // Reserve    Before       After
+        // WETH       100          81.672169 (approximately)
+        // USDC       200,000      245,016.508349
 
         (wethReserve, usdcReserve) = UniswapV2Library.getReserves(router.factory(), address(weth), address(usdc));
         uint256 finalPrice = router.quote(1 ether, wethReserve, usdcReserve);
 
         // 4. Verify the pool reserves and reserve-ratio price after the purchase.
-        assertEq(wethReserve, INITIAL_WETH_RESERVE - expectedWeth);
-        assertEq(usdcReserve, INITIAL_USDC_RESERVE + depositedUsdc);
-        assertEq(finalPrice, 2_204_684_999); // 2,204.684999 USDC per WETH, rounded down.
-        assertGt(finalPrice, initialPrice);
-        assertLt(finalPrice, CEX_PRICE);
+        assertEq(wethReserve, INITIAL_WETH_RESERVE - expectedWeth); // 100 WETH - 18.32 WETH = 81,68 WETH
+        assertEq(usdcReserve, INITIAL_USDC_RESERVE + depositedUsdc); // 200,000 USDC + 45,016 USDC = 245,016
+        assertEq(finalPrice, CEX_PRICE); // 3,000 USDC/WETH at USDC precision.        
 
-        // The arbitrageur spent all their USDC and still holds the purchased WETH.
-        assertEq(usdc.balanceOf(arbitrageur), 0);
-        assertEq(weth.balanceOf(arbitrageur), 4_748_297_375_815_592_703); //≈ 4.74 WETH
+        assertEq(usdc.balanceOf(arbitrageur), INITIAL_ARBITRAGEUR_USDC_BALANCE - depositedUsdc);
 
-        // 5. Sell all purchased WETH to the funded CEX at 3,000 USDC per WETH.
+        // 5. Sell all purchased WETH to the CEX at 3,000 USDC per WETH.
         vm.startPrank(arbitrageur);
         weth.approve(address(cex), wethBought);
         uint256 usdcReceived = cex.sellWeth(wethBought);
         vm.stopPrank();
 
-        // Arbitrageur finishes with zero WETH and 14,244.892127 USDC.
+        // Arbitrageur receives 54,983.491652 USDC from his sell
         uint256 expectedUsdc = expectedWeth * CEX_PRICE / 1 ether;
         assertEq(usdcReceived, expectedUsdc);
-        assertEq(weth.balanceOf(arbitrageur), 0);
-        assertEq(usdc.balanceOf(arbitrageur), expectedUsdc);
-        assertEq(expectedUsdc, 14_244_892_127); // 14,244.892127 USDC, rounded down.
+        assertEq(expectedUsdc, 54_983_491_652); // 18.32 WETH x 3,000 USDC/WETH = 54,983.491652 USDC, rounded down.
+        
+        assertEq(weth.balanceOf(arbitrageur), 0); // All WETH was spent
+        // The arbitrageur's final balance is = 50,000 − 45,016.508349 + 54,983.491652 = 59,966.983303 USDC
+        assertEq(usdc.balanceOf(arbitrageur), INITIAL_ARBITRAGEUR_USDC_BALANCE - depositedUsdc + expectedUsdc);
 
         // Profit after the pool fee, excluding gas and CEX fees.
-        // Profit is 4,244.892127 USDC.
-        uint256 profit = usdc.balanceOf(arbitrageur) - depositedUsdc;
-        assertEq(profit, 4_244_892_127); // 4,244.892127 USDC.
+        // Profit = Final balance - Initial balance = 59,966.983303 − 50,000 = 9,966.983303 USDC
+        uint256 profit = usdc.balanceOf(arbitrageur) - INITIAL_ARBITRAGEUR_USDC_BALANCE;
+        assertEq(profit, 9_966_983_303);
 
         // The CEX received the WETH and paid from its own USDC balance.
         assertEq(weth.balanceOf(address(cex)), wethBought);
