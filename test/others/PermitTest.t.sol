@@ -3,7 +3,7 @@ pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {stdError} from "forge-std/StdError.sol";
-import {UniswapV2ERC20} from "../src/v2-core/UniswapV2ERC20.sol";
+import {UniswapV2ERC20} from "../../src/v2-core/UniswapV2ERC20.sol";
 
 // Only minting is added for setup; approve, permit and transferFrom are inherited.
 contract PermitDemoToken is UniswapV2ERC20 {
