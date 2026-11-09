@@ -80,7 +80,7 @@ contract UniswapV2ERC20UnitTest is Test {
         // Recreate the EIP-712 digest
         bytes32 structHash = keccak256(abi.encode(token.PERMIT_TYPEHASH(), owner, spender, VALUE, nonce, deadline));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash));
-        
+
         // The owner signes the digest
         return vm.sign(privateKey, digest);
     }

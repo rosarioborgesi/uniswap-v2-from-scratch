@@ -68,7 +68,7 @@ contract ArbitrageTest is Test {
         uint256 initialPrice = router.quote(1 ether, wethReserve, usdcReserve);
         assertEq(initialPrice, 2_000 * 1e6);
 
-        // 2. Calculate how much USDC the arbitrageur must deposit 
+        // 2. Calculate how much USDC the arbitrageur must deposit
         // to bring the ratio USDC / WETH = 3,000 USDC
         uint256 discriminant =
             9 * usdcReserve * usdcReserve + 4 * 997 * 1000 * CEX_PRICE * wethReserve * usdcReserve / 1 ether;
@@ -103,7 +103,7 @@ contract ArbitrageTest is Test {
         // 4. Verify the pool reserves and reserve-ratio price after the purchase.
         assertEq(wethReserve, INITIAL_WETH_RESERVE - expectedWeth); // 100 WETH - 18.32 WETH = 81,68 WETH
         assertEq(usdcReserve, INITIAL_USDC_RESERVE + depositedUsdc); // 200,000 USDC + 45,016 USDC = 245,016
-        assertEq(finalPrice, CEX_PRICE); // 3,000 USDC/WETH at USDC precision.        
+        assertEq(finalPrice, CEX_PRICE); // 3,000 USDC/WETH at USDC precision.
 
         assertEq(usdc.balanceOf(arbitrageur), INITIAL_ARBITRAGEUR_USDC_BALANCE - depositedUsdc);
 
@@ -117,7 +117,7 @@ contract ArbitrageTest is Test {
         uint256 expectedUsdc = expectedWeth * CEX_PRICE / 1 ether;
         assertEq(usdcReceived, expectedUsdc);
         assertEq(expectedUsdc, 54_983_491_652); // 18.32 WETH x 3,000 USDC/WETH = 54,983.491652 USDC, rounded down.
-        
+
         assertEq(weth.balanceOf(arbitrageur), 0); // All WETH was spent
         // The arbitrageur's final balance is = 50,000 − 45,016.508349 + 54,983.491652 = 59,966.983303 USDC
         assertEq(usdc.balanceOf(arbitrageur), INITIAL_ARBITRAGEUR_USDC_BALANCE - depositedUsdc + expectedUsdc);

@@ -20,7 +20,7 @@ contract PriceImpactTest is Test {
     uint256 internal constant INITIAL_PRICE = 3_000 * 1e6; // USDC / WETH = 3,000
     uint256 internal constant TRADER_WETH_BALANCE = 50 ether;
 
-    function setUp() public {       
+    function setUp() public {
         weth = new MockERC20(liquidityProvider, INITIAL_WETH_RESERVE + TRADER_WETH_BALANCE, 18);
         usdc = new MockERC20(liquidityProvider, INITIAL_USDC_RESERVE, 6);
         UniswapV2Factory factory = new UniswapV2Factory(address(this));
@@ -47,7 +47,7 @@ contract PriceImpactTest is Test {
     // demonstrates that selling a small amount relative to the pool’s reserves produces only a small reduction in the execution price.
     function test_SmallSwapHasLowPriceImpact() public {
         // The pool contains 100 WETH and 300,000 USDC, so its initial price is 3,000 USDC per WETH
-        
+
         // 1. Calculate the spot-price estimate (If the price stayed fixed).
         // Selling 0.1% of the WETH reserve: the spot-price estimate is 300 USDC.
         // The trader expects 0.1 WETH x 3,000 WETH/USDC = 300 USDC
@@ -55,15 +55,14 @@ contract PriceImpactTest is Test {
         uint256 spotEstimate = amountIn * INITIAL_PRICE / 1 ether;
         assertEq(spotEstimate, 300 * 1e6); // 300 USDC
 
-
         // 2. Execute the swap
-        // The trader receives 298.802094 USDC for 0.1 WETH 
+        // The trader receives 298.802094 USDC for 0.1 WETH
 
         // This follows the fee-adjusted constant-product formula:
-        // effective input = 0.1 × 0.997 = 0.0997 WETH 
+        // effective input = 0.1 × 0.997 = 0.0997 WETH
         // output = (0.0997 × 300,000) / (100 + 0.0997)
         //        ≈ 298.802094 USDC
-        uint256 actualOutput = _sellWeth(amountIn);        
+        uint256 actualOutput = _sellWeth(amountIn);
         assertEq(actualOutput, 298_802094); // 298.802094 USDC
 
         // The trader loss is 300 USDC - 299 USDC ≈ 1 USDC
@@ -93,7 +92,7 @@ contract PriceImpactTest is Test {
         // The trader loss is 150,000 USDC - 99,799 ≈ 50,201 USDC
     }
 
-    // Executes a WETH → USDC swap 
+    // Executes a WETH → USDC swap
     // - amountIn: how much WETH the trader sells, using 18 decimals.
     // - actualOutput: how much USDC the trader receives, using 6 decimals.
     function _sellWeth(uint256 amountIn) internal returns (uint256 actualOutput) {
@@ -106,7 +105,7 @@ contract PriceImpactTest is Test {
         address[] memory path = new address[](2);
         path[0] = address(weth);
         path[1] = address(usdc);
-        // quotedAmounts[0] is the WETH input. 
+        // quotedAmounts[0] is the WETH input.
         // quotedAmounts[1] is the expected USDC output, including both the fee and price impact.
         uint256[] memory quotedAmounts = router.getAmountsOut(amountIn, path);
 

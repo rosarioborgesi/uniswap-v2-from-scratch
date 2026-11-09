@@ -27,7 +27,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
     // Stores the two reserves and a timestamp in a single slot (112 + 112 + 32 = 256 bit).
     // They are updated by the _update function. So they are updated when: mint, burn, swap or sync are called
-    uint112 private reserve0; // Stored snapshot of token0 balance 
+    uint112 private reserve0; // Stored snapshot of token0 balance
     uint112 private reserve1; // Stored snapshot of token1 balance
     uint32 private blockTimestampLast; // block.timestamp of the latest _update call % 2**32
 
@@ -88,11 +88,13 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
     // ============ Reserve Update ============
 
-    /// @dev Update reserves and, on the first call of each block, accumulate price.
-    /// @param balance0 Current balance of token0 in the pair -> IERC20(token0).balanceOf(address(this))
-    /// @param balance1 Current balance of token1 in the pair -> IERC20(token1).balanceOf(address(this))
-    /// @param _reserve0 Previous reserve of token0 (from storage) -> this is updated by _update
-    /// @param _reserve1 Previous reserve of token1 (from storage) -> this is updated by _update
+    /// @dev If time has elapsed since the last update and both previous reserves are nonzero,
+    /// adds each price derived from those reserves multiplied by the elapsed seconds to its cumulative accumulator.
+    /// Then records the supplied balances as reserves, stores the current timestamp modulo 2^32.
+    /// @param balance0 Current token0 balance of the pair; must fit in uint112.
+    /// @param balance1 Current token1 balance of the pair; must fit in uint112.
+    /// @param _reserve0 Recorded token0 reserve before this update, used to calculate the price over the elapsed interval.
+    /// @param _reserve1 Recorded token1 reserve before this update, used to calculate the price over the elapsed interval.
     function _update(uint256 balance0, uint256 balance1, uint112 _reserve0, uint112 _reserve1) internal {
         // Require balance0 and balance1 each fit in uint112
         require(balance0 <= type(uint112).max && balance1 <= type(uint112).max, "UniswapV2: OVERFLOW");
@@ -127,7 +129,6 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         // Emit Sync(reserve0, reserve1)
         emit Sync(reserve0, reserve1);
     }
-
 
     // ============ Protocol Fee ============
 
@@ -169,7 +170,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
 
         // 1. Calculate how much was deposited
         // Read current reserves
-        (uint112 _reserve0, uint112 _reserve1, ) = getReserves();
+        (uint112 _reserve0, uint112 _reserve1,) = getReserves();
 
         // Read actual token balances of this contract
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
@@ -187,17 +188,13 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         uint256 _totalSupply = totalSupply;
 
         // 3. Calculate the depositor’s LP tokens
-        if(_totalSupply == 0) {
-        // First deposit
+        if (_totalSupply == 0) {
+            // First deposit
             liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             _mint(address(0), MINIMUM_LIQUIDITY); // permanently lock minimum, this makes share inflation attacks more expensive.
-        }
-        else {
+        } else {
             // Subsequent deposits
-            liquidity = Math.min(
-                amount0 * _totalSupply / _reserve0,
-                amount1 * _totalSupply / _reserve1
-            );
+            liquidity = Math.min(amount0 * _totalSupply / _reserve0, amount1 * _totalSupply / _reserve1);
         }
 
         // 4. Mint and record the new state
@@ -206,50 +203,103 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         // Mint LP tokens to the recipient (increases LP totalSupply and balanceOf[to])
         _mint(to, liquidity);
 
-        // _update records the new reserves and updates the cumulative price accounting. 
+        // _update records the new reserves and updates the cumulative price accounting.
         _update(balance0, balance1, _reserve0, _reserve1);
 
-        // If protocol fees are enabled, kLast is then set to the new reserve product 
+        // If protocol fees are enabled, kLast is then set to the new reserve product
         // as the baseline for future fee calculations.
-        if(feeOn) {
+        if (feeOn) {
             kLast = uint256(reserve0) * reserve1;
         }
 
         emit Mint(msg.sender, amount0, amount1);
     }
 
-    function burn(address to) external returns (uint256 amount0, uint256 amount1) {
-        return (uint256(0), uint256(0));
+    // ============ Burn Function ============
+
+    /// @notice Burns LP tokens and sends proportional amounts of both tokens to `to`.
+    /// @dev LP tokens must be transferred to the pair before calling this function.
+    /// @param to The address to receive the withdrawn tokens
+    /// @return amount0 The amount of token0 withdrawn
+    /// @return amount1 The amount of token1 withdrawn
+    function burn(address to) external lock returns (uint256 amount0, uint256 amount1) {
+        // Read current reserves
+        (uint112 _reserve0, uint112 _reserve1,) = getReserves();
+
+        // Read token addresses into local variables (gas optimization)
+        address _token0 = token0;
+        address _token1 = token1;
+
+        // Read actual token balances of this contract
+        uint256 balance0 = IERC20(_token0).balanceOf(address(this));
+        uint256 balance1 = IERC20(_token1).balanceOf(address(this));
+
+        // Read LP token balance sent to this contract (the amount to burn)
+        uint256 liquidity = balanceOf[address(this)];
+
+        // Call _mintFee and capture the return value
+        bool feeOn = _mintFee(_reserve0, _reserve1);
+
+        // Read totalSupply AFTER _mintFee (it may have changed totalSupply)
+        uint256 _totalSupply = totalSupply;
+
+        // Calculate proportional withdrawal amounts
+        amount0 = liquidity * balance0 / _totalSupply;
+        amount1 = liquidity * balance1 / _totalSupply;
+
+        // Require both amounts > 0
+        require(amount0 > 0 && amount1 > 0, "UniswapV2: INSUFFICIENT_LIQUIDITY_BURNED");
+
+        // Burn the LP tokens from this contract
+        _burn(address(this), liquidity);
+
+        // Transfer both tokens to the recipient
+        _safeTransfer(_token0, to, amount0);
+        _safeTransfer(_token1, to, amount1);
+
+        // Read new balances after transfer
+        balance0 = IERC20(_token0).balanceOf(address(this));
+        balance1 = IERC20(_token1).balanceOf(address(this));
+
+        // Update reserves
+        _update(balance0, balance1, _reserve0, _reserve1);
+
+        // If feeOn, store kLast = uint256(reserve0) * reserve1
+        if (feeOn) {
+            kLast = uint256(reserve0) * reserve1;
+        }
+
+        emit Burn(msg.sender, amount0, amount1, to);
     }
 
     function skim(address to) external {}
 
     function sync() external {}
 
-    function swap(uint amount0Out, uint amount1Out, address to, bytes calldata data) external lock {
-        require(amount0Out > 0 || amount1Out > 0, 'UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT');
+    function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external lock {
+        require(amount0Out > 0 || amount1Out > 0, "UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT");
         (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
-        require(amount0Out < _reserve0 && amount1Out < _reserve1, 'UniswapV2: INSUFFICIENT_LIQUIDITY');
+        require(amount0Out < _reserve0 && amount1Out < _reserve1, "UniswapV2: INSUFFICIENT_LIQUIDITY");
 
-        uint balance0;
-        uint balance1;
+        uint256 balance0;
+        uint256 balance1;
         { // scope for _token{0,1}, avoids stack too deep errors
-        address _token0 = token0;
-        address _token1 = token1;
-        require(to != _token0 && to != _token1, 'UniswapV2: INVALID_TO');
-        if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out); // optimistically transfer tokens
-        if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out); // optimistically transfer tokens
-        if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
-        balance0 = IERC20(_token0).balanceOf(address(this));
-        balance1 = IERC20(_token1).balanceOf(address(this));
+            address _token0 = token0;
+            address _token1 = token1;
+            require(to != _token0 && to != _token1, "UniswapV2: INVALID_TO");
+            if (amount0Out > 0) _safeTransfer(_token0, to, amount0Out); // optimistically transfer tokens
+            if (amount1Out > 0) _safeTransfer(_token1, to, amount1Out); // optimistically transfer tokens
+            if (data.length > 0) IUniswapV2Callee(to).uniswapV2Call(msg.sender, amount0Out, amount1Out, data);
+            balance0 = IERC20(_token0).balanceOf(address(this));
+            balance1 = IERC20(_token1).balanceOf(address(this));
         }
-        uint amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
-        uint amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
-        require(amount0In > 0 || amount1In > 0, 'UniswapV2: INSUFFICIENT_INPUT_AMOUNT');
+        uint256 amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
+        uint256 amount1In = balance1 > _reserve1 - amount1Out ? balance1 - (_reserve1 - amount1Out) : 0;
+        require(amount0In > 0 || amount1In > 0, "UniswapV2: INSUFFICIENT_INPUT_AMOUNT");
         { // scope for reserve{0,1}Adjusted, avoids stack too deep errors
-        uint balance0Adjusted = balance0 * 1000 - amount0In * 3;
-        uint balance1Adjusted = balance1 * 1000 - amount1In * 3;
-        require(balance0Adjusted * balance1Adjusted >= uint256(_reserve0) * _reserve1 * 1000**2, 'UniswapV2: K');
+            uint256 balance0Adjusted = balance0 * 1000 - amount0In * 3;
+            uint256 balance1Adjusted = balance1 * 1000 - amount1In * 3;
+            require(balance0Adjusted * balance1Adjusted >= uint256(_reserve0) * _reserve1 * 1000 ** 2, "UniswapV2: K");
         }
 
         _update(balance0, balance1, _reserve0, _reserve1);

@@ -18,7 +18,7 @@ contract UniswapV2PairHarness is UniswapV2Pair {
 }
 
 contract UniswapV2PairUnitTest is Test {
-    UniswapV2PairHarness  pair;
+    UniswapV2PairHarness pair;
     MockERC20 token0;
     MockERC20 token1;
     address recipient = makeAddr("recipient");
@@ -61,7 +61,7 @@ contract UniswapV2PairUnitTest is Test {
     /////////////////////////////////
     function test_FirstUpdateStoresReservesAndTimestampAndEmitsSync() public {
         vm.warp(100);
-        
+
         pair.update(10, 20);
 
         (uint112 reserve0, uint112 reserve1, uint32 timestamp) = pair.getReserves();
@@ -105,14 +105,14 @@ contract UniswapV2PairUnitTest is Test {
         pair.update(40, 10);
 
         // Between timestamps 110 and 114, the reserves are (40, 10) and 4 seconds pass:
-        // Price0: reserve1 / reserve0 = 10 / 40 = 0.25. 
+        // Price0: reserve1 / reserve0 = 10 / 40 = 0.25.
         // Its encoded value is q112 / 4, time elapsed 4 seconds, so we add (q112 / 4) * 4.
         uint256 expectedPrice0AfterSecondInterval = expectedPrice0 + (q112 / 4) * 4;
 
-        // Price1: reserve0 / reserve1 = 40 / 10 = 4. 
+        // Price1: reserve0 / reserve1 = 40 / 10 = 4.
         // Its encoded value is 4 * q112, time elapsed 4 seconds, so we add 4 * q112 * 4.
-        uint256 expectedPrice1AfterSecondInterval = expectedPrice1 + 4 * q112 * 4;        
-        
+        uint256 expectedPrice1AfterSecondInterval = expectedPrice1 + 4 * q112 * 4;
+
         assertEq(pair.price0CumulativeLast(), expectedPrice0AfterSecondInterval);
         assertEq(pair.price1CumulativeLast(), expectedPrice1AfterSecondInterval);
     }
@@ -121,12 +121,12 @@ contract UniswapV2PairUnitTest is Test {
     //             mint            //
     /////////////////////////////////
 
-    // This test verifies that the first liquidity deposit locks 1,000 LP tokens permanently and 
+    // This test verifies that the first liquidity deposit locks 1,000 LP tokens permanently and
     // gives the remaining LP tokens to the specified recipient.
     function test_MintFirstDepositLocksMinimumLiquidityAndMintsToRecipient() public {
         // Deposits 10_000 token0 and 40_000 token1 in the pair contract
         _deposit(10_000, 40_000);
-        
+
         uint256 liquidity = pair.mint(recipient);
 
         // Initial LP supply = sqrt(10,000 × 40,000) = 20,000
@@ -146,19 +146,19 @@ contract UniswapV2PairUnitTest is Test {
     // Verifies that adding 50% of each reserve mints 50% of the existing LP token supply.
     function test_MintProportionalDepositMintsProportionalLiquidity() public {
         // 1. Seeds the pool with 10,000 token0 and 40,000 token1
-        _deposit(10_000, 40_000);        
+        _deposit(10_000, 40_000);
         pair.mint(recipient);
 
         // The initial LP supply is:
         // sqrt(10,000 × 40,000) = 20,000 LP
         // Of that, 1,000 LP is permanently locked at address(0), and 19,000 LP goes to recipient
 
-        // 2. Transfers more tokens into the pair. 
+        // 2. Transfers more tokens into the pair.
         // Both amounts are 50% of the existing reserves, preserving the pool’s 1:4 ratio
         _deposit(5_000, 20_000);
         uint256 liquidity = pair.mint(recipient);
 
-        // liquidity = min(5,000 × 20,000 / 10,000, 20,000 × 20,000 / 40,000) 
+        // liquidity = min(5,000 × 20,000 / 10,000, 20,000 × 20,000 / 40,000)
         //           = min(10,000, 10,000)
         //           = 10,000 LP
         // The second mint returns 10,000 newly minted LP tokens.
@@ -174,7 +174,7 @@ contract UniswapV2PairUnitTest is Test {
 
     // Verifies that an unbalanced deposit earns LP tokens based on the smaller proportional contribution.
     function test_MintUnbalancedDepositUsesLimitingToken() public {
-        // 1. deposits 10,000 token0 and 40,000 token1, a 1:4 ratio        
+        // 1. deposits 10,000 token0 and 40,000 token1, a 1:4 ratio
         _deposit(10_000, 40_000);
         pair.mint(recipient);
 
@@ -189,7 +189,7 @@ contract UniswapV2PairUnitTest is Test {
         // LP minted = min(5,000 × 20,000 / 10,000, 10,000 × 20,000 / 40,000)
         //           = min(10,000, 5,000)
         //           = 5,000
-        
+
         assertEq(liquidity, 5_000); // The second deposit earns 5,000 LP
         assertEq(pair.balanceOf(recipient), 24_000); // Original 19,000 + new 5,000
         assertEq(pair.totalSupply(), 25_000); // Original 20,000 + new 5,000
@@ -209,7 +209,7 @@ contract UniswapV2PairUnitTest is Test {
         pair.mint(recipient);
     }
 
-    // Checks that mint() issues the protocol’s LP tokens first, 
+    // Checks that mint() issues the protocol’s LP tokens first,
     // then uses the increased total supply to calculate the depositor’s LP tokens.
     function test_MintSettlesProtocolFeeBeforeCalculatingDepositorLiquidity() public {
         // 1. Deposit 10,000 token0 and 40,000 token1
@@ -228,7 +228,7 @@ contract UniswapV2PairUnitTest is Test {
         pair.update(20_000, 80_000);
         assertEq(pair.kLast(), 400_000_000);
 
-        // Make a new liquidity deposit. Transfer 2,000 and 8,000 then call mint()    
+        // Make a new liquidity deposit. Transfer 2,000 and 8,000 then call mint()
         _deposit(2_000, 8_000);
         uint256 liquidity = pair.mint(recipient);
 
@@ -238,7 +238,7 @@ contract UniswapV2PairUnitTest is Test {
         // protocol LP (fee) = floor(20,000 × (40,000 − 20,000)/ (5 × 40,000 + 20,000)) = 1,818
 
         // The depositor’s LP tokens must then use that updated supply
-        // liquidity = min(floor(2,000 × 21,818 / 20,000), floor(8,000 × 21,818 / 80,000)) 
+        // liquidity = min(floor(2,000 × 21,818 / 20,000), floor(8,000 × 21,818 / 80,000))
         //           = 2,181
         assertEq(pair.balanceOf(protocol), 1_818);
         // Depositor receives 10% of the supply AFTER the protocol fee is minted.
@@ -248,8 +248,51 @@ contract UniswapV2PairUnitTest is Test {
         assertEq(pair.kLast(), 1_936_000_000); // 22,000 × 88,000 = 1,936,000,000
     }
 
+    /////////////////////////////////
+    //             burn            //
+    /////////////////////////////////
+
+    // burning 25% of the LP supply returns 25% of each token and updates the pool’s accounting correctly.
+    function test_BurnWithdrawsProportionalTokensAndUpdatesAccounting() public {
+        address provider = makeAddr("provider");
+
+        // 1. Create the pool.
+        // Deposit 10,000 token0 and 40,000 token1. 
+        // Minting creates 20,000 LP tokens: 19,000 for the provider and 1,000 permanently locked.
+        _deposit(10_000, 40_000);
+        pair.mint(provider);
+
+        // 2. Prepare the burn.
+        // The provider transfers 5,000 LP tokens to the pair.
+        vm.prank(provider);
+        pair.transfer(address(pair), 5_000);
+
+        // 3. Burn LP tokens
+        // SInce 5,000 / 20,000 = 25%, the expected withdrawals are:
+        
+        // Token	Calculation	      Withdrawal
+        // token0	10,000 × 25%	  2,500
+        // token1	40,000 × 25%	  10,000
+
+        (uint256 amount0, uint256 amount1) = pair.burn(recipient);
+
+        // 4. Check the result.
+        // Burning 25% of the supply withdraws 25% of each underlying balance.
+        assertEq(amount0, 2_500); // 10,000 × 25% = 2,500 
+        assertEq(amount1, 10_000); // 40,000 × 25% = 10,000
+        assertEq(token0.balanceOf(recipient), 2_500); // 10,000 × 25% = 2,500
+        assertEq(token1.balanceOf(recipient), 10_000); // 40,000 × 25% = 10,000
+
+        assertEq(pair.totalSupply(), 15_000); // 20,000 - 5,000 = 15,000
+        assertEq(pair.balanceOf(address(pair)), 0);
+
+        (uint112 reserve0, uint112 reserve1,) = pair.getReserves();
+        assertEq(reserve0, 7_500); // 10,000 - 2,500 = 7,500
+        assertEq(reserve1, 30_000); // 40,000 - 10,000 = 30,000
+    }
+
     function _deposit(uint256 amount0, uint256 amount1) internal {
         token0.transfer(address(pair), amount0);
         token1.transfer(address(pair), amount1);
-    } 
+    }
 }
