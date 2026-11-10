@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {UniswapV2Pair} from "../../src/v2-core/UniswapV2Pair.sol";
+import {IUniswapV2Pair} from "../../src/v2-core/interfaces/IUniswapV2Pair.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockUSDT} from "../mocks/MockUSDT.sol";
 
@@ -257,7 +258,7 @@ contract UniswapV2PairUnitTest is Test {
         address provider = makeAddr("provider");
 
         // 1. Create the pool.
-        // Deposit 10,000 token0 and 40,000 token1. 
+        // Deposit 10,000 token0 and 40,000 token1.
         // Minting creates 20,000 LP tokens: 19,000 for the provider and 1,000 permanently locked.
         _deposit(10_000, 40_000);
         pair.mint(provider);
@@ -269,7 +270,7 @@ contract UniswapV2PairUnitTest is Test {
 
         // 3. Burn LP tokens
         // SInce 5,000 / 20,000 = 25%, the expected withdrawals are:
-        
+
         // Token	Calculation	      Withdrawal
         // token0	10,000 × 25%	  2,500
         // token1	40,000 × 25%	  10,000
@@ -278,7 +279,7 @@ contract UniswapV2PairUnitTest is Test {
 
         // 4. Check the result.
         // Burning 25% of the supply withdraws 25% of each underlying balance.
-        assertEq(amount0, 2_500); // 10,000 × 25% = 2,500 
+        assertEq(amount0, 2_500); // 10,000 × 25% = 2,500
         assertEq(amount1, 10_000); // 40,000 × 25% = 10,000
         assertEq(token0.balanceOf(recipient), 2_500); // 10,000 × 25% = 2,500
         assertEq(token1.balanceOf(recipient), 10_000); // 40,000 × 25% = 10,000
@@ -289,6 +290,51 @@ contract UniswapV2PairUnitTest is Test {
         (uint112 reserve0, uint112 reserve1,) = pair.getReserves();
         assertEq(reserve0, 7_500); // 10,000 - 2,500 = 7,500
         assertEq(reserve1, 30_000); // 40,000 - 10,000 = 30,000
+    }
+
+    function test_SkimTransfersOnlyExcessWithoutChangingReserves() public {
+        _deposit(10_000, 40_000);
+        pair.mint(recipient);
+        _deposit(123, 456);
+
+        pair.skim(recipient);
+
+        assertEq(token0.balanceOf(recipient), 123);
+        assertEq(token1.balanceOf(recipient), 456);
+        assertEq(token0.balanceOf(address(pair)), 10_000);
+        assertEq(token1.balanceOf(address(pair)), 40_000);
+        (uint112 reserve0, uint112 reserve1,) = pair.getReserves();
+        assertEq(reserve0, 10_000);
+        assertEq(reserve1, 40_000);
+        assertEq(pair.totalSupply(), 20_000);
+        assertEq(pair.kLast(), 400_000_000);
+    }
+
+    function test_SyncRecordsBalancesAndAccumulatesPreviousPrices() public {
+        vm.warp(100);
+        _deposit(10_000, 40_000);
+        pair.mint(recipient);
+        _deposit(1_000, 2_000);
+        vm.warp(110);
+
+        vm.expectEmit(false, false, false, true, address(pair));
+        emit IUniswapV2Pair.Sync(11_000, 42_000);
+        pair.sync();
+
+        (uint112 reserve0, uint112 reserve1, uint32 timestamp) = pair.getReserves();
+        assertEq(reserve0, 11_000);
+        assertEq(reserve1, 42_000);
+        assertEq(timestamp, 110);
+        uint256 q112 = uint256(1) << 112;
+        assertEq(pair.price0CumulativeLast(), 4 * q112 * 10);
+        assertEq(pair.price1CumulativeLast(), q112 / 4 * 10);
+        assertEq(pair.totalSupply(), 20_000);
+        assertEq(pair.kLast(), 400_000_000);
+
+        // Once synchronized, the donated tokens are reserves and cannot be skimmed.
+        pair.skim(recipient);
+        assertEq(token0.balanceOf(recipient), 0);
+        assertEq(token1.balanceOf(recipient), 0);
     }
 
     function _deposit(uint256 amount0, uint256 amount1) internal {
