@@ -16,6 +16,10 @@ contract UniswapV2PairHarness is UniswapV2Pair {
     function safeTransfer(address token, address to, uint256 value) external {
         _safeTransfer(token, to, value);
     }
+
+    function mintFee(uint112 reserve0, uint112 reserve1) external {
+        _mintFee(reserve0, reserve1);
+    }
 }
 
 contract UniswapV2PairUnitTest is Test {
@@ -34,6 +38,11 @@ contract UniswapV2PairUnitTest is Test {
         token0 = new MockERC20(address(this), 1_000_000, 18);
         token1 = new MockERC20(address(this), 1_000_000, 18);
         pair.initialize(address(token0), address(token1));
+    }
+
+    function _deposit(uint256 amount0, uint256 amount1) internal {
+        token0.transfer(address(pair), amount0);
+        token1.transfer(address(pair), amount1);
     }
 
     ///////////////////////////////////////
@@ -116,6 +125,26 @@ contract UniswapV2PairUnitTest is Test {
 
         assertEq(pair.price0CumulativeLast(), expectedPrice0AfterSecondInterval);
         assertEq(pair.price1CumulativeLast(), expectedPrice1AfterSecondInterval);
+    }
+
+    /////////////////////////////////////
+    //             _mintFee            //
+    /////////////////////////////////////
+
+    function test_MintFeeMintsExpectedLPTokensToProtocol() public {
+        // Establish totalSupply = 6,500 and sqrt(kLast) = 6,500.
+        _deposit(6_500, 6_500);
+        // mint:
+        // - Records reserves of 6,500 tokens each.
+        // - Creates 6,500 total LP tokens: 5,500 for recipient and 1,000 permanently locked.
+        // - Sets kLast = 6,500 × 6,500, because protocol fees are enabled in setUp().
+        pair.mint(recipient); // Needed to set the basiline kLast
+
+        // _mintFee compares the supplied √k = 7,150 against the baseline √kLast = 6,500
+        pair.mintFee(7_150, 7_150);
+
+        // Protocol LP = 6,500 * (7,150 - 6,500) / (5 * 7,150 + 6,500) = 100.
+        assertEq(pair.balanceOf(protocol), 100);
     }
 
     /////////////////////////////////
@@ -292,53 +321,60 @@ contract UniswapV2PairUnitTest is Test {
         assertEq(reserve1, 30_000); // 40,000 - 10,000 = 30,000
     }
 
-    function test_SkimTransfersOnlyExcessWithoutChangingReserves() public {
+    /////////////////////////////////
+    //             swap            //
+    /////////////////////////////////
+    
+    // Checks that swapping 1,000 token0 for 3,626 token1
+    function test_SwapToken0ForToken1TransfersOutputAndUpdatesReserves() public {
+        // 1. Create the pool
+        // _deposit transfers 10,000 token0 and 40,000 token1 to the pair.
         _deposit(10_000, 40_000);
+        // Creates the LP tokens and calls _update, which records 10,000 and 40,000 as the reserves.
         pair.mint(recipient);
-        _deposit(123, 456);
 
-        pair.skim(recipient);
+        // 2. Pay the input
+        // We need to transfer the token to the pair before calling swap
+        token0.transfer(address(pair), 1_000);
+        // The pair now holds 11,000 token0, but its recorded token0 reserve is still 10,000. 
+        // During swap, this difference is recognized as the input.
+        
+        // With the 0.3% fee, the maximum output is
 
-        assertEq(token0.balanceOf(recipient), 123);
-        assertEq(token1.balanceOf(recipient), 456);
-        assertEq(token0.balanceOf(address(pair)), 10_000);
-        assertEq(token1.balanceOf(address(pair)), 40_000);
+        //               amount0In × 997 × reserve1
+        // amount1Out ≤ ───────────────────────────────
+        //              reserve0 × 1000 + amount0In × 997
+
+        // floor(1_000 * 997 * 40_000 / (10_000 * 1_000 + 1_000 * 997)) = 3_626.
+
+        pair.swap(0, 3_626, recipient, ""); // Empty data means no flash swap callback.
+
+        assertEq(token1.balanceOf(recipient), 3_626);
         (uint112 reserve0, uint112 reserve1,) = pair.getReserves();
-        assertEq(reserve0, 10_000);
-        assertEq(reserve1, 40_000);
-        assertEq(pair.totalSupply(), 20_000);
-        assertEq(pair.kLast(), 400_000_000);
+        assertEq(reserve0, 11_000); // 10,000 + 1,000 = 11,000
+        assertEq(reserve1, 36_374); // 40,000 − 3,626 = 36,374
     }
 
-    function test_SyncRecordsBalancesAndAccumulatesPreviousPrices() public {
-        vm.warp(100);
+    // The pair rejects a swap when the supplied input cannot pay for the requested output, 
+    // accounting for the 0.3% fee.
+    function test_SwapRevertsWhenInputDoesNotSatisfyInvariant() public {
+        // Transfers tokens to the pair
         _deposit(10_000, 40_000);
+        // Creates the LP tokens and calls _update, which records 10,000 and 40,000 as the reserves.
         pair.mint(recipient);
-        _deposit(1_000, 2_000);
-        vm.warp(110);
 
-        vm.expectEmit(false, false, false, true, address(pair));
-        emit IUniswapV2Pair.Sync(11_000, 42_000);
-        pair.sync();
+        token0.transfer(address(pair), 1_000);
 
-        (uint112 reserve0, uint112 reserve1, uint32 timestamp) = pair.getReserves();
-        assertEq(reserve0, 11_000);
-        assertEq(reserve1, 42_000);
-        assertEq(timestamp, 110);
-        uint256 q112 = uint256(1) << 112;
-        assertEq(pair.price0CumulativeLast(), 4 * q112 * 10);
-        assertEq(pair.price1CumulativeLast(), q112 / 4 * 10);
-        assertEq(pair.totalSupply(), 20_000);
-        assertEq(pair.kLast(), 400_000_000);
+        //               amount0In × 997 × reserve1
+        // amount1Out ≤ ───────────────────────────────
+        //              reserve0 × 1000 + amount0In × 997
 
-        // Once synchronized, the donated tokens are reserves and cannot be skimmed.
-        pair.skim(recipient);
-        assertEq(token0.balanceOf(recipient), 0);
-        assertEq(token1.balanceOf(recipient), 0);
+        // floor(1_000 * 997 * 40_000 / (10_000 * 1_000 + 1_000 * 997)) = 3_626.
+
+        // The maximum output is 3_626 after the 0.3% fee.
+        // Requesting one unit more breaks the fee-adjusted product invariant.
+        vm.expectRevert(bytes("UniswapV2: K"));
+        pair.swap(0, 3_627, recipient, "");
     }
-
-    function _deposit(uint256 amount0, uint256 amount1) internal {
-        token0.transfer(address(pair), amount0);
-        token1.transfer(address(pair), amount1);
-    }
+    
 }

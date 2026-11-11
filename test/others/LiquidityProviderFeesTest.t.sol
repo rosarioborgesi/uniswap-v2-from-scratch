@@ -41,7 +41,7 @@ contract LiquidityProviderFeesTest is Test {
         pair = UniswapV2Pair(factory.getPair(address(weth), address(usdc)));
         assertEq(router.quote(1 ether, 100 ether, 300_000 * 1e6), 3_000 * 1e6);
         // Protocol fees are disabled. The full 0.3% trading fee benefits liquidity providers.
-        assertEq(factory.feeTo(), address(0)); 
+        assertEq(factory.feeTo(), address(0));
 
         // 2. The user deposits 100 WETH and 300,000 USDC, owning exactly 50%.
         // Total pool reserves are now 200 WETH and 600,000 USDC.
@@ -116,13 +116,11 @@ contract LiquidityProviderFeesTest is Test {
 
         // The user's share of the fees charged on both swaps totals 0.01515 WETH.
         // These fees remain in the pool and are included in the user's proportional withdrawal.
-    
-        
+
         // When protocol fees are enabled, the protocol receives approximately one-sixth of fee growth, leaving five-sixths for liquidity providers.
 
         // The trader still pays 0.3%. The effective split is approximately:
         // - 0.25% for liquidity providers collectively.
-        // - 0.05% for the protocol        
-    
+        // - 0.05% for the protocol
     }
 }

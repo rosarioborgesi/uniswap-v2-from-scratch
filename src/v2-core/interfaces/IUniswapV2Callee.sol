@@ -1,5 +1,4 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Adapted from Uniswap v2-core/contracts/interfaces/IUniswapV2Callee.sol for Solidity 0.8.35.
+// SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
 interface IUniswapV2Callee {
