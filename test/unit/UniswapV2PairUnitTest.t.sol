@@ -324,7 +324,7 @@ contract UniswapV2PairUnitTest is Test {
     /////////////////////////////////
     //             swap            //
     /////////////////////////////////
-    
+
     // Checks that swapping 1,000 token0 for 3,626 token1
     function test_SwapToken0ForToken1TransfersOutputAndUpdatesReserves() public {
         // 1. Create the pool
@@ -336,9 +336,9 @@ contract UniswapV2PairUnitTest is Test {
         // 2. Pay the input
         // We need to transfer the token to the pair before calling swap
         token0.transfer(address(pair), 1_000);
-        // The pair now holds 11,000 token0, but its recorded token0 reserve is still 10,000. 
+        // The pair now holds 11,000 token0, but its recorded token0 reserve is still 10,000.
         // During swap, this difference is recognized as the input.
-        
+
         // With the 0.3% fee, the maximum output is
 
         //               amount0In × 997 × reserve1
@@ -355,7 +355,7 @@ contract UniswapV2PairUnitTest is Test {
         assertEq(reserve1, 36_374); // 40,000 − 3,626 = 36,374
     }
 
-    // The pair rejects a swap when the supplied input cannot pay for the requested output, 
+    // The pair rejects a swap when the supplied input cannot pay for the requested output,
     // accounting for the 0.3% fee.
     function test_SwapRevertsWhenInputDoesNotSatisfyInvariant() public {
         // Transfers tokens to the pair
@@ -376,5 +376,4 @@ contract UniswapV2PairUnitTest is Test {
         vm.expectRevert(bytes("UniswapV2: K"));
         pair.swap(0, 3_627, recipient, "");
     }
-    
 }

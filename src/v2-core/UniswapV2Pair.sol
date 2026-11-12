@@ -35,7 +35,6 @@ import {Math} from "./libraries/Math.sol";
 /// @notice Core AMM pair contract. Inherits the LP token (UniswapV2ERC20).
 /// @dev This section covers state layout, initialization, safe transfers, and the reentrancy lock.
 contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
-
     ///////////////////////////////////
     //            Libraries          //
     ///////////////////////////////////
@@ -227,7 +226,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     /// @param data If non-empty, call uniswapV2Call on the recipient (flash loan)
     function swap(uint256 amount0Out, uint256 amount1Out, address to, bytes calldata data) external lock {
         // 1. Validate the requested output
-        // At least one output must be positive, 
+        // At least one output must be positive,
         // and each output must be strictly smaller than its corresponding reserve
         require(amount0Out > 0 || amount1Out > 0, "UniswapV2: INSUFFICIENT_OUTPUT_AMOUNT");
         (uint112 _reserve0, uint112 _reserve1,) = getReserves(); // gas savings
@@ -259,7 +258,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         }
 
         // 4. Infer the input amounts
-        // _reserve0 - amount0Out is what the balance would be if the pair only sent tokens out. 
+        // _reserve0 - amount0Out is what the balance would be if the pair only sent tokens out.
         // Anything above that is counted as input:
         // input = max(actual balance − expected balance after output, 0)
         uint256 amount0In = balance0 > _reserve0 - amount0Out ? balance0 - (_reserve0 - amount0Out) : 0;
@@ -272,7 +271,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         // Subtracting 3 per 1000 units of input accounts for the 0.3% trading fee
         // The check is equivalent to:
         // (balance0 − 0.003 × amount0In) × (balance1 − 0.003 × amount1In) ≥ oldReserve0 × oldReserve1
-        
+
         // The code scales everything by 1000 to use integer arithmetic.
 
         // For an ordinary token0 → token1 swap, this implies:
@@ -281,8 +280,8 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         // amount1Out ≤ ───────────────────────────────
         //              reserve0 × 1000 + amount0In × 997
 
-        // For example, with reserves of 1,000 tokens each, 
-        // supplying 100 token0 allows approximately 90.661 token1 out, 
+        // For example, with reserves of 1,000 tokens each,
+        // supplying 100 token0 allows approximately 90.661 token1 out,
         // rounded down to the token’s smallest unit.
 
         { // scope for reserve{0,1}Adjusted, avoids stack too deep errors
@@ -395,7 +394,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
     //////////////////////////////////////////////////////
     //      External & Public View & Pure Functions     //
     //////////////////////////////////////////////////////
-    
+
     /// @notice Returns the current reserves and the last block timestamp.
     /// @return _reserve0 The reserve of token0
     /// @return _reserve1 The reserve of token1
