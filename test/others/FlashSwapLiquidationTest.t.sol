@@ -35,14 +35,14 @@ contract FlashSwapLiquidator is IUniswapV2Callee {
         weth.transfer(msg.sender, weth.balanceOf(address(this)));
     }
 
-    // runs after the pair sends the borrowed USDC, but before it checks repayment. 
+    // runs after the pair sends the borrowed USDC, but before it checks repayment.
     // It uses that window to liquidate the Aave position.
     function uniswapV2Call(address sender, uint256 amount0, uint256 amount1, bytes calldata data) external {
         // 1. Validate the callback
         require(msg.sender == address(pair) && sender == address(this), "Invalid callback");
-        
+
         // 2. Identify the borrowed USDC amount
-        // amount0 and amount1 are the tokens the pair sent out. 
+        // amount0 and amount1 are the tokens the pair sent out.
         // We select the USDC amount and check that no WETH was borrowed.
         bool usdcIsToken0 = pair.token0() == address(usdc);
         uint256 borrowed = usdcIsToken0 ? amount0 : amount1;
@@ -53,8 +53,8 @@ contract FlashSwapLiquidator is IUniswapV2Callee {
         (uint112 reserve0, uint112 reserve1,) = pair.getReserves();
         uint256 usdcReserve = usdcIsToken0 ? reserve0 : reserve1;
         uint256 wethReserve = usdcIsToken0 ? reserve1 : reserve0;
-        // This formula calculates the WETH input required for the USDC output, 
-        // including Uniswap’s 0.3% fee and price impact. 
+        // This formula calculates the WETH input required for the USDC output,
+        // including Uniswap’s 0.3% fee and price impact.
         // The + 1 rounds up so repayment is sufficient.
         uint256 wethRepayment = wethReserve * borrowed * 1000 / ((usdcReserve - borrowed) * 997) + 1;
 
@@ -62,7 +62,7 @@ contract FlashSwapLiquidator is IUniswapV2Callee {
         usdc.approve(address(pool), borrowed);
         // false requests the underlying WETH rather than aTokens.
         pool.liquidationCall(address(weth), address(usdc), pool.borrower(), abi.decode(data, (uint256)), false);
-        
+
         // 5. Check the result and repay the pair
         // Checks confirm all borrowed USDC was used.
         require(usdc.balanceOf(address(this)) == 0, "Unused flash funds");
@@ -150,7 +150,7 @@ contract FlashSwapLiquidationTest is Test {
         // What happens when we call liquidator.liquidate?
         // The liquidator contract starts with zero USDC and zero WETH
 
-        // Step	                Token movement	
+        // Step	                Token movement
         // Flash borrow	        Uniswap pair → liquidator: 1,250 USDC
         // Liquidate	        Liquidator → Aave V1: 1,250 USDC
         // Receive collateral	Aave V1 → liquidator: ≈0.4375 WETH

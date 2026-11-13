@@ -3,7 +3,6 @@ pragma solidity 0.8.35;
 
 import {Test} from "forge-std/Test.sol";
 import {UniswapV2Pair} from "../../src/v2-core/UniswapV2Pair.sol";
-import {IUniswapV2Pair} from "../../src/v2-core/interfaces/IUniswapV2Pair.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockUSDT} from "../mocks/MockUSDT.sol";
 
