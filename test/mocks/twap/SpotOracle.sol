@@ -14,13 +14,21 @@ contract SpotOracle is IPriceOracle {
         wethIsToken0 = pair.token0() == address(weth);
     }
 
+    /// @notice Returns the pool's WETH and USDC reserves, regardless of token ordering.
+    /// @return wethReserve WETH reserve in raw token units (18 decimals).
+    /// @return usdcReserve USDC reserve in raw token units (6 decimals).
     function reserves() public view returns (uint256 wethReserve, uint256 usdcReserve) {
         (uint112 r0, uint112 r1,) = pair.getReserves();
         return wethIsToken0 ? (r0, r1) : (r1, r0);
     }
 
+    /// @notice Values WETH in USDC using the pool's current reserve ratio.
+    /// @dev Rounds down and excludes swap fees and price impact. This spot quote can
+    /// change within a single transaction when trades manipulate the pool's reserves.
+    /// @param wethAmount WETH amount in raw token units (18 decimals).
+    /// @return usdcAmount USDC value in raw token units (6 decimals).
     function quote(uint256 wethAmount) public view override returns (uint256 usdcAmount) {
         (uint256 w, uint256 u) = reserves();
-        return wethAmount * u / w;
+        return wethAmount * u / w; //0.1 WETH * $1,000 = 100 $
     }
 }

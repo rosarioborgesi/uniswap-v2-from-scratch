@@ -71,9 +71,6 @@ contract TwapManipulationTest is Test {
         Attacker attacker = new Attacker(router, pool, lender);
         weth.transfer(address(attacker), 10 ether);
 
-        // Allow 30 minutes at the original pool price before the atomic attack.
-        vm.warp(block.timestamp + 30 minutes);
-
         uint256 lenderBefore = usdc.balanceOf(address(lender));
 
         // What happens inside attacker.attack:

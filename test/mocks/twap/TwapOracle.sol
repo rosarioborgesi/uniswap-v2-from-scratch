@@ -12,7 +12,7 @@ contract TwapOracle is IPriceOracle {
     /// @notice Minimum time between price updates.
     uint256 public constant PERIOD = 30 minutes;
 
-    uint256 private constant Q112 = 2 ** 112;
+    uint256 private constant Q112 = 2 ** 112; // Represents the value 1 in Q112 fixed-point representation
 
     /// @notice Pool used as the price source.
     UniswapV2Pair public immutable pair;
@@ -65,6 +65,10 @@ contract TwapOracle is IPriceOracle {
         }
         require(elapsed >= PERIOD, "Window not elapsed");
         unchecked {
+            // Time-weighted average price 
+            // - cumulative: the latest accumulated price × time.
+            // - cumulativeLast: the previous observation
+            // - elapsed: elapsed time in seconds.
             average = (cumulative - cumulativeLast) / elapsed;
         }
         cumulativeLast = cumulative;
