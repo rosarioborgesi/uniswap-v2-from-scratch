@@ -48,7 +48,7 @@ contract Attacker {
 
         // 3. Deposits the attacker’s original 10 WETH into the lending pool as collateral,
         // and borrow the maximum
-        // The LendingMock allows borrowing up to 50% of the collateral’s oracle value (LTV). 
+        // The LendingMock allows borrowing up to 50% of the collateral’s oracle value (LTV).
         // With spot pricing:
         // - 10 WETH × 3,000 USDC/WETH × 50% = 15,000 USDC
         // With the test’s established TWAP price:
@@ -62,7 +62,7 @@ contract Attacker {
         pool.borrow(borrowed);
 
         // 4. Reverse the price manipulation
-        // Sells the WETH purchased in step 2 back for USDC, 
+        // Sells the WETH purchased in step 2 back for USDC,
         // bringing the spot price close to its original value.
         // The original 10 WETH stays deposited as collateral.
         _swap(boughtWeth, address(weth), address(usdc));

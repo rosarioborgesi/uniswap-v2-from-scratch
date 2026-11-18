@@ -65,7 +65,7 @@ contract TwapOracle is IPriceOracle {
         }
         require(elapsed >= PERIOD, "Window not elapsed");
         unchecked {
-            // Time-weighted average price 
+            // Time-weighted average price
             // - cumulative: the latest accumulated price × time.
             // - cumulativeLast: the previous observation
             // - elapsed: elapsed time in seconds.

@@ -51,10 +51,10 @@ contract TwapManipulationTest is Test {
         );
 
         UniswapV2Pair pair = UniswapV2Pair(factory.getPair(address(weth), address(usdc)));
-        
+
         spotOracle = new SpotOracle(pair, weth);
         twapOracle = new TwapOracle(pair, weth);
-        
+
         lender = new FlashLenderMock(usdc);
         usdc.transfer(address(lender), 200_000 * 1e6);
     }
@@ -110,7 +110,7 @@ contract TwapManipulationTest is Test {
         assertApproxEqAbs(spotOracle.quote(10 ether), 10_000 * 1e6, 30 * 1e6);
     }
 
-    // The test proves that the attacker can borrow about 5,000 USDC 
+    // The test proves that the attacker can borrow about 5,000 USDC
     // against collateral worth only about 10,000 USDC, and cannot inflate WETH’s spot price.
     /// @notice TWAP pricing preserves the borrowing limit during the same manipulation.
     function test_twapAllowsFiveThousandDuringFlashLoanAttack() public {

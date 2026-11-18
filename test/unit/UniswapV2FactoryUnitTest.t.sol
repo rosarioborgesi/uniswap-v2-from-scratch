@@ -6,8 +6,6 @@ import {UniswapV2Factory} from "../../src/v2-core/UniswapV2Factory.sol";
 import {UniswapV2Pair} from "../../src/v2-core/UniswapV2Pair.sol";
 
 contract UniswapV2FactoryUnitTest is Test {
-
-
     ////////////////////////////////////
     //            createPair          //
     ////////////////////////////////////
@@ -31,7 +29,7 @@ contract UniswapV2FactoryUnitTest is Test {
         assertEq(factory.allPairs(0), pair);
     }
 
-    // This demonstrates that CREATE2 makes pair addresses independent of deployment order, 
+    // This demonstrates that CREATE2 makes pair addresses independent of deployment order,
     // while standard CREATE addresses depend on it.
     function test_CreatePairAddressDoesNotDependOnDeploymentOrder() public {
         UniswapV2Factory factory = new UniswapV2Factory(address(this));
