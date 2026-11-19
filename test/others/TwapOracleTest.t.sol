@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {UniswapV2Factory} from "../../src/v2-core/UniswapV2Factory.sol";
 import {UniswapV2Pair} from "../../src/v2-core/UniswapV2Pair.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
-import {SpotOracle} from "../mocks/twap/SpotOracle.sol";
 import {TwapOracle} from "../mocks/twap/TwapOracle.sol";
 
 /// @notice Run with `forge test --match-contract TwapOracleTest -vv` to see the price timeline.

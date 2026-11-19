@@ -5,7 +5,6 @@ import {Test} from "forge-std/Test.sol";
 import {UniswapV2Factory} from "../../src/v2-core/UniswapV2Factory.sol";
 import {UniswapV2Pair} from "../../src/v2-core/UniswapV2Pair.sol";
 import {UniswapV2Router02} from "../../src/v2-periphery/UniswapV2Router02.sol";
-import {UniswapV2Library} from "../../src/v2-periphery/libraries/UniswapV2Library.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 
 import {SpotOracle} from "../mocks/twap/SpotOracle.sol";
