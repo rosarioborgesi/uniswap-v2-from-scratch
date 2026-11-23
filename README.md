@@ -12,6 +12,7 @@ The original Uniswap V2 core contracts use Solidity 0.5.16 and the SafeMath libr
 
 - [Uniswap V2 Core](https://github.com/Uniswap/v2-core) — the original core contracts.
 - [Uniswap V2 Periphery](https://github.com/Uniswap/v2-periphery) — the original periphery contracts.
+- [TransferHelper](https://github.com/Uniswap/solidity-lib/blob/master/contracts/libraries/TransferHelper.sol)
 
 ## Connect With Me
 

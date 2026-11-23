@@ -95,6 +95,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         token1 = _token1;
     }
 
+    // This is the pair contract’s function for adding liquidity
     /// @notice Mints LP tokens to `to`. Tokens must be transferred to the pair before calling.
     /// @param to The address to receive LP tokens
     /// @return liquidity The amount of LP tokens minted
@@ -150,6 +151,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         emit Mint(msg.sender, amount0, amount1);
     }
 
+    // This is the pair contract’s function for removing liquidity
     /// @notice Burns LP tokens and sends proportional amounts of both tokens to `to`.
     /// @dev LP tokens must be transferred to the pair before calling this function.
     /// @param to The address to receive the withdrawn tokens
@@ -287,6 +289,8 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         { // scope for reserve{0,1}Adjusted, avoids stack too deep errors
             uint256 balance0Adjusted = balance0 * 1000 - amount0In * 3;
             uint256 balance1Adjusted = balance1 * 1000 - amount1In * 3;
+            // Enforces the constant-product invariant k * y = k
+            // The product of the fee-adjusted balances after the swap must be at least the product of the reserves before the swap.
             require(balance0Adjusted * balance1Adjusted >= uint256(_reserve0) * _reserve1 * 1000 ** 2, "UniswapV2: K");
         }
 

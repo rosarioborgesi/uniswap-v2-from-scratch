@@ -112,8 +112,7 @@ contract PriceImpactTest is Test {
         vm.startPrank(trader);
         weth.approve(address(router), amountIn);
         // 4. Execute the swap.
-        uint256[] memory amounts =
-            router.swapExactTokensForTokens(amountIn, quotedAmounts[1], path, trader, block.timestamp);
+        router.swapExactTokensForTokens(amountIn, quotedAmounts[1], path, trader, block.timestamp);
         vm.stopPrank();
 
         // 5. Verify the trader’s output and balances.
