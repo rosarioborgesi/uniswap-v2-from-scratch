@@ -141,7 +141,19 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         }
     }
 
-    /// @notice Burns approved LP tokens and withdraws both assets, enforcing minimum amounts and a deadline.
+    /// @notice Redeems LP tokens for a proportional share of both underlying tokens.
+    /// @dev The caller must approve the router to transfer `liquidity` LP tokens to the pair.
+    /// The pair burns its LP token balance and sends both underlying tokens to `to`.
+    /// Reverts if either withdrawal amount is below its minimum or the deadline has passed.
+    /// @param tokenA Address of the first underlying token.
+    /// @param tokenB Address of the second underlying token.
+    /// @param liquidity Amount of LP tokens to transfer from the caller, in base units.
+    /// @param amountAMin Minimum withdrawal amount of tokenA, in its base units.
+    /// @param amountBMin Minimum withdrawal amount of tokenB, in its base units.
+    /// @param to Recipient of both underlying tokens.
+    /// @param deadline Latest block timestamp at which the transaction can succeed.
+    /// @return amountA Amount of tokenA withdrawn from the pair.
+    /// @return amountB Amount of tokenB withdrawn from the pair.
     function removeLiquidity(
         address tokenA,
         address tokenB,
@@ -151,13 +163,125 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         address to,
         uint256 deadline
     ) public virtual override ensure(deadline) returns (uint256 amountA, uint256 amountB) {
+        // Compute the pair address
         address pair = UniswapV2Library.pairFor(factory, tokenA, tokenB);
+        // Transfer LP tokens (liquidity) from msg.sender to the pair
         IUniswapV2Pair(pair).transferFrom(msg.sender, pair, liquidity);
+        // Burn the LP tokens and withdraw the underlying assets
         (uint256 amount0, uint256 amount1) = IUniswapV2Pair(pair).burn(to);
+        // Put the amounts in the caller’s order
         (address token0,) = UniswapV2Library.sortTokens(tokenA, tokenB);
         (amountA, amountB) = tokenA == token0 ? (amount0, amount1) : (amount1, amount0);
+        // Enforce the minimums
         require(amountA >= amountAMin, "UniswapV2Router: INSUFFICIENT_A_AMOUNT");
         require(amountB >= amountBMin, "UniswapV2Router: INSUFFICIENT_B_AMOUNT");
+    }
+
+    /// @notice Redeems token/WETH LP tokens for the underlying ERC-20 token and native ETH.
+    /// @dev The caller must approve the router to spend `liquidity` LP tokens. The router receives both assets,
+    /// unwraps the WETH, and sends the token and ETH to `to`.
+    /// Reverts if either withdrawal amount is below its minimum or the deadline has passed.
+    /// @param token Address of the ERC-20 token paired with WETH.
+    /// @param liquidity Amount of LP tokens to transfer from the caller, in base units.
+    /// @param amountTokenMin Minimum token amount withdrawn from the pair, in the token's base units.
+    /// @param amountETHMin Minimum ETH amount to withdraw, in wei.
+    /// @param to Recipient of the token and ETH.
+    /// @param deadline Latest block timestamp at which the withdrawal can succeed.
+    /// @return amountToken Amount of the ERC-20 token withdrawn from the pair.
+    /// @return amountETH Amount of native ETH sent to the recipient, in wei.
+    function removeLiquidityETH(
+        address token,
+        uint256 liquidity,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline
+    ) public virtual override ensure(deadline) returns (uint256 amountToken, uint256 amountETH) {
+        // Redeem the LP tokens
+        //  address(this) receives amountToken (ERC-20) and amountETH (WETH)
+        (amountToken, amountETH) = removeLiquidity(token, WETH, liquidity, amountTokenMin, amountETHMin, address(this), deadline);
+        // Transfer ERC-20 amountToken to the recipient (to)
+        TransferHelper.safeTransfer(token, to, amountToken);
+        // Unwrap WETH
+        IWETH(WETH).withdraw(amountETH);
+        // Send ETH to recipient
+        TransferHelper.safeTransferETH(to, amountETH);
+    }
+
+    /// @notice Redeems LP tokens for both underlying tokens using a signed permit.
+    /// @dev The permit must name the caller as owner and the router as spender. It uses the pair's EIP-712 domain
+    /// and the caller's current nonce. If the withdrawal reverts, the permit approval and nonce update revert too.
+    /// @param tokenA Address of the first underlying token.
+    /// @param tokenB Address of the second underlying token.
+    /// @param liquidity Amount of LP tokens to transfer from the caller, in base units.
+    /// @param amountAMin Minimum withdrawal amount of tokenA, in its base units.
+    /// @param amountBMin Minimum withdrawal amount of tokenB, in its base units.
+    /// @param to Recipient of both underlying tokens.
+    /// @param deadline Latest block timestamp at which both the permit and withdrawal can succeed.
+    /// @param approveMax Set to `true` to sign for an unlimited allowance or `false` to sign for exactly `liquidity`.
+    /// @param v Recovery identifier of the permit signature.
+    /// @param r R component of the permit signature.
+    /// @param s S component of the permit signature.
+    /// @return amountA Amount of tokenA withdrawn from the pair.
+    /// @return amountB Amount of tokenB withdrawn from the pair.
+    function removeLiquidityWithPermit(
+        address tokenA,
+        address tokenB,
+        uint256 liquidity,
+        uint256 amountAMin,
+        uint256 amountBMin,
+        address to,
+        uint256 deadline,
+        bool approveMax,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual override returns (uint256 amountA, uint256 amountB) {
+        // Find the pair
+        address pair = UniswapV2Library.pairFor(factory, tokenA, tokenB);
+        // Determine approval value: if approveMax, use type(uint256).max, else use liquidity
+        uint256 value = approveMax ? type(uint256).max : liquidity;
+        // Apply the signed approval
+        IUniswapV2Pair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
+        // Remove liquidity
+        (amountA, amountB) = removeLiquidity(tokenA, tokenB, liquidity, amountAMin, amountBMin, to, deadline);
+    }
+
+    /// @notice Redeems token/WETH LP tokens for the underlying ERC-20 token and native ETH using a signed permit.
+    /// @dev The permit uses the pair's EIP-712 domain and the caller's current nonce, with the caller as owner and
+    /// the router as spender. If the withdrawal reverts, the permit approval and nonce update revert too.
+    /// @param token Address of the ERC-20 token paired with WETH.
+    /// @param liquidity Amount of LP tokens to transfer from the caller, in base units.
+    /// @param amountTokenMin Minimum token amount withdrawn from the pair, in the token's base units.
+    /// @param amountETHMin Minimum ETH amount to withdraw, in wei.
+    /// @param to Recipient of the token and ETH.
+    /// @param deadline Latest block timestamp at which both the permit and withdrawal can succeed.
+    /// @param approveMax Set to `true` to sign for an unlimited allowance or `false` to sign for exactly `liquidity`.
+    /// @param v Recovery identifier of the permit signature.
+    /// @param r R component of the permit signature.
+    /// @param s S component of the permit signature.
+    /// @return amountToken Amount of the ERC-20 token withdrawn from the pair, in the token's base units.
+    /// @return amountETH Amount of native ETH sent to the recipient, in wei.
+    function removeLiquidityETHWithPermit(
+        address token,
+        uint256 liquidity,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline,
+        bool approveMax,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual override returns (uint256 amountToken, uint256 amountETH) {
+        // Compute pair address using UniswapV2Library.pairFor(factory, token, WETH)
+        address pair = UniswapV2Library.pairFor(factory, token, WETH);
+        // Determine approval value: if approveMax, use type(uint256).max, else use liquidity
+        uint256 value = approveMax ? type(uint256).max : liquidity;
+        // Apply the signed approval
+        IUniswapV2Pair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
+        // Remove liquidity
+        (amountToken, amountETH) = removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline);
     }
 
     function swapExactTokensForTokens(

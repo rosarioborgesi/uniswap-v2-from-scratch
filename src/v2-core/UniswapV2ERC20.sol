@@ -3,6 +3,7 @@ pragma solidity 0.8.35;
 
 import {IUniswapV2ERC20} from "./interfaces/IUniswapV2ERC20.sol";
 
+// Implements an ERC-20 LP token extended with EIP-2612 permit
 /// @title UniswapV2ERC20
 /// @notice ERC-20 liquidity provider (LP) token for Uniswap V2 pairs with EIP-2612 approvals by signature.
 /// @dev UniswapV2Pair inherits this contract to mint and burn LP tokens.

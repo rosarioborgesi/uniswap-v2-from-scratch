@@ -173,6 +173,7 @@ contract UniswapV2Pair is IUniswapV2Pair, UniswapV2ERC20 {
         uint256 liquidity = balanceOf[address(this)];
 
         // Call _mintFee and capture the return value
+        // Collect the protcol's fee
         bool feeOn = _mintFee(_reserve0, _reserve1);
 
         // Read totalSupply AFTER _mintFee (it may have changed totalSupply)
