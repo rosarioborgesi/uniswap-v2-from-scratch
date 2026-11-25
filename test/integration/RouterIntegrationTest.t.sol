@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {UniswapV2Factory} from "../../src/v2-core/UniswapV2Factory.sol";
 import {IUniswapV2Pair} from "../../src/v2-core/interfaces/IUniswapV2Pair.sol";
 import {UniswapV2Router02} from "../../src/v2-periphery/UniswapV2Router02.sol";
+import {UniswapV2Library} from "../../src/v2-periphery/libraries/UniswapV2Library.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockWETH} from "../mocks/MockWETH.sol";
 
@@ -13,17 +14,21 @@ contract RouterIntegrationTest is Test {
     uint256 providerKey;
     MockERC20 tokenA;
     MockERC20 tokenB;
+    MockERC20 tokenC;
     MockWETH weth;
     UniswapV2Factory factory;
     UniswapV2Router02 router;
+    address recipient;
 
     function setUp() public {
+        recipient = makeAddr("recipient");
         (provider, providerKey) = makeAddrAndKey("provider");
         tokenA = new MockERC20(address(this), 10_000 ether, 18);
         tokenB = new MockERC20(address(this), 10_000 ether, 18);
+        tokenC = new MockERC20(address(this), 10_000 ether, 18);
         weth = new MockWETH();
         factory = new UniswapV2Factory(address(this));
-        router = new UniswapV2Router02(address(factory), address(weth));
+        router = new UniswapV2Router02(address(factory), address(weth));        
     }
 
     /////////////////////////////////////////
@@ -180,6 +185,17 @@ contract RouterIntegrationTest is Test {
     /////////////////////////////////////////////////
     //           removeLiquidityWithPermit         //
     /////////////////////////////////////////////////
+    function _signPermit(IUniswapV2Pair pair, uint256 value, uint256 nonce, uint256 deadline)
+        internal
+        view
+        returns (uint8 v, bytes32 r, bytes32 s)
+    {
+        bytes32 structHash =
+            keccak256(abi.encode(pair.PERMIT_TYPEHASH(), provider, address(router), value, nonce, deadline));
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", pair.DOMAIN_SEPARATOR(), structHash));
+        return vm.sign(providerKey, digest);
+    }
+
     function test_RemoveLiquidityWithPermitReturnsBothTokensAndConsumesAllowance() public {
         // Seed the pair with 100 token A and 400 token B
         tokenA.approve(address(router), 100 ether);
@@ -258,14 +274,111 @@ contract RouterIntegrationTest is Test {
         assertEq(pair.allowance(provider, address(router)), 0);
     }
 
-    function _signPermit(IUniswapV2Pair pair, uint256 value, uint256 nonce, uint256 deadline)
-        internal
-        view
-        returns (uint8 v, bytes32 r, bytes32 s)
-    {
-        bytes32 structHash =
-            keccak256(abi.encode(pair.PERMIT_TYPEHASH(), provider, address(router), value, nonce, deadline));
-        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", pair.DOMAIN_SEPARATOR(), structHash));
-        return vm.sign(providerKey, digest);
+    ////////////////////////////////////////////////
+    //           swapExactTokensForTokens         //
+    ////////////////////////////////////////////////
+    // Verifies that the router swaps exactly 1,000 token A for 2,000 token B and sends the output to a separate recipient address.
+    function test_SwapExactTokensForTokensSingleHop() public {
+        uint256 amountIn = 1_000 ether;     
+
+        // Uniswap’s 0.3% swap fee gives the 1,000 A input an effective value of 997 A for pricing.
+        // The extepcted output is 4,000 × 997 / (997 + 997) = 2,000 B
+        uint256 expectedOut = 2_000 ether;  
+        
+        // 1. Seed the pool with 997 token A and 4,000 token B
+        tokenA.approve(address(router), 997 ether);
+        tokenB.approve(address(router), 4_000 ether);
+        router.addLiquidity(
+            address(tokenA), address(tokenB), 997 ether, 4_000 ether, 997 ether, 4_000 ether, address(this), block.timestamp
+        );
+
+        // We are doing a swap token A -> token B
+        address[] memory path = new address[](2);
+        path[0] = address(tokenA);
+        path[1] = address(tokenB);        
+
+        // The test gives provider 1,001 A
+        tokenA.transfer(provider, amountIn + 1 ether);        
+
+        // 2. Execute the swap
+        // The provider swaps 1,000 token A and recipient receives the output (2,000 B)
+        // The pool receives 1,000 token A and gives the recipient 2,000 token B
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountIn);
+        router.swapExactTokensForTokens(amountIn, expectedOut, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        // Assert the provider has deposited 1,000 token A in the pool
+        assertEq(tokenA.balanceOf(provider), 1 ether); // 1,001 - 1,000 = 1
+        assertEq(tokenB.balanceOf(recipient), expectedOut); // The recipient has received 2,000 B
+
+        address pair = factory.getPair(address(tokenA), address(tokenB));
+        assertEq(tokenA.balanceOf(pair), 997 ether + amountIn); // 997 + 1,000 = 1,997 A
+        assertEq(tokenB.balanceOf(pair), 4_000 ether - expectedOut); // 4,000 - 2,000 = 2,000 B
     }
+
+    // verifies that the router spends exactly 1,000 A from the provider and delivers 1,500 C to a separate recipient in one transaction.
+    // The path [A, B, C] has two hops because each adjacent pair of tokens is a separate swap.
+    function test_SwapExactTokensForTokensTwoHops() public {
+        uint256 amountIn = 1_000 ether;
+        // The first hop yields 2,000 B. After the fee, 1,994 B buys half of the 3,000 C reserve.
+        uint256 expectedTokenCOut = 1_500 ether;
+        
+        // 1. Seed the pools
+        // Seed the A/B pool with 997 token A and 4,000 token B
+        tokenA.approve(address(router), 997 ether);
+        tokenB.approve(address(router), 4_000 ether);
+        router.addLiquidity(
+            address(tokenA), address(tokenB), 997 ether, 4_000 ether, 997 ether, 4_000 ether, address(this), block.timestamp
+        );
+
+        // Seed the B/C pool with 1,994 token B and 3,000 token C
+        tokenB.approve(address(router), 1_994 ether);
+        tokenC.approve(address(router), 3_000 ether);
+        router.addLiquidity(
+            address(tokenB), address(tokenC), 1_994 ether, 3_000 ether, 1_994 ether, 3_000 ether, address(this), block.timestamp
+        );
+
+        address[] memory path = new address[](3);
+        path[0] = address(tokenA);
+        path[1] = address(tokenB);
+        path[2] = address(tokenC);
+
+        // The test contract gives 1,001 token A to the provider
+        tokenA.transfer(provider, amountIn + 1 ether);
+
+        // 2. Execute the swap
+        // The provider swaps 1,000 token A for 1,500 token C
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountIn);
+        router.swapExactTokensForTokens(amountIn, expectedTokenCOut, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        // Hop	    Input	    Output
+        // A → B	1,000 A	    2,000 B
+        // B → C	2,000 B	    1,500 C
+
+        assertEq(tokenA.balanceOf(provider), 1 ether); // 1,001 - 1,000 = 1
+        assertEq(tokenC.balanceOf(recipient), expectedTokenCOut); // 1,500 token C
+
+        // Pool	  Token	  Before	Change	 After
+        // A/B	   A	   997	    +1,000	 1,997
+        // A/B	   B	   4,000	−2,000	 2,000
+        // B/C	   B	   1,994	+2,000	 3,994
+        // B/C	   C	   3,000	−1,500	 1,500
+
+        uint256 tokenBAmount = 2_000 ether;
+
+        // The A/B pair receives 1,000 A and sends 2,000 B directly to the B/C pair.
+        (uint256 reserveA, uint256 reserveBInAB) =
+            UniswapV2Library.getReserves(address(factory), address(tokenA), address(tokenB));
+        assertEq(reserveA, 997 ether + amountIn); // 1,997 A
+        assertEq(reserveBInAB, 4_000 ether - tokenBAmount); // 2,000 B
+
+        // The B/C pair receives those 2,000 B and sends 1,500 C to the recipient.
+        (uint256 reserveBInBC, uint256 reserveC) =
+            UniswapV2Library.getReserves(address(factory), address(tokenB), address(tokenC));
+        assertEq(reserveBInBC, 1_994 ether + tokenBAmount); // 3,994 B
+        assertEq(reserveC, 3_000 ether - expectedTokenCOut); // 1,500 C
+    }    
 }

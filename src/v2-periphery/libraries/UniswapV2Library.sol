@@ -90,6 +90,10 @@ library UniswapV2Library {
         amountIn = numerator / denominator + 1;
     }
 
+    // This answers “If I start with this much of the first token, 
+    // how much will I get at each hop?” 
+    // It quotes an exact-input swap using each pair’s current reserves, the 0.3% swap fee, and rounding down. 
+    // Each hop’s output becomes the next hop’s input.
     /// @notice Performs chained getAmountOut calculations on any number of pairs.
     /// @dev path is an array of token addresses representing the swap route.
     function getAmountsOut(address factory, uint256 amountIn, address[] memory path)
@@ -106,6 +110,10 @@ library UniswapV2Library {
         }
     }
 
+    // This answers “If I want exactly this much of the final token, 
+    // how much do I need to start with?” 
+    // It takes the desired output and a token path, then works backward through the pairs.
+    // Each step uses getAmountIn to account for the pair’s reserves and the 0.3% swap fee.
     /// @notice Performs chained getAmountIn calculations on any number of pairs.
     /// @dev Calculates backwards from the desired output to the required input.
     function getAmountsIn(address factory, uint256 amountOut, address[] memory path)

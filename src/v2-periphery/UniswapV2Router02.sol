@@ -284,6 +284,17 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         (amountToken, amountETH) = removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline);
     }
 
+    // "I want to spend exactly 1 ETH, give me as much USDC as possible" 
+    /// @notice Swaps an exact amount of the input token along the given path and sends the final output to `to`.
+    /// @dev The caller must approve the router to spend `amountIn` of `path[0]`.
+    /// Reverts if the quoted final output is below `amountOutMin`.
+    /// @param amountIn Exact amount of the input token to transfer from the caller.
+    /// @param amountOutMin Minimum acceptable amount of the final output token.
+    /// @param path Ordered token addresses from input to output. Each consecutive pair must have liquidity.
+    /// The path must contain at least two tokens.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the transaction can succeed.
+    /// @return amounts Token amounts in path order, from the initial input through each swap's output.
     function swapExactTokensForTokens(
         uint256 amountIn,
         uint256 amountOutMin,
@@ -291,11 +302,20 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         address to,
         uint256 deadline
     ) external virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        // 1. Calculate the output at each hop.
+        // The router uses each pair’s reserves to calculate how much the swap will produce.
         amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
+        // If the final amount is below amountOutMin, the transaction reverts
         require(amounts[amounts.length - 1] >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT");
+        // 2. Transfers the input tokens in the first pair.
         TransferHelper.safeTransferFrom(
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
+        // 3. Executes each hop
+        // The first pair already has the input tokens, 
+        // so _swap tells it how much of the next token to send out. 
+        // Each intermediate pair sends its output directly to the next pair, 
+        // and the last pair sends its output to to.
         _swap(amounts, path, to);
     }
 
@@ -346,14 +366,35 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         }
     }
 
+    // Executes a swap across one or more Uniswap pairs.
+    /// @notice Executes swaps along a token path and sends the final output to `_to`.
+    /// @dev The caller must transfer `amounts[0]` to the first pair before calling.
+    /// Each intermediate pair sends its output directly to the next pair.
+    /// @param amounts Token amounts in path order, starting with the initial input amount.
+    /// @param path Ordered token addresses, with at least two tokens and one amount per token.
+    /// @param _to Recipient of the final output token.
     function _swap(uint256[] memory amounts, address[] memory path, address _to) internal virtual {
         for (uint256 i; i < path.length - 1; i++) {
+            // 1. Identify the tokens for this hop
+            // At index i, the input token is path[i], and the output token is path[i + 1]
             (address input, address output) = (path[i], path[i + 1]);
             (address token0,) = UniswapV2Library.sortTokens(input, output);
+            // The amount to send out is amounts[i + 1]
             uint256 amountOut = amounts[i + 1];
+            // 2. Set the correct output field
+            // The pair’s swap function takes separate amount0Out and amount1Out arguments.
+            // If the input is token0, _swap sets amount1Out.
+            // Otherwise, it sets amount0Out. The other field is zero.
             (uint256 amount0Out, uint256 amount1Out) =
                 input == token0 ? (uint256(0), amountOut) : (amountOut, uint256(0));
+            // 3. Choose where the output goes 
+            // On an intermediate hop, 
+            // the current pair sends its output directly to the next pair, 
+            // where it becomes the input for that hop.
+            // On the last hop, the pair sends the output to _to.
             address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
+            // 4. Call the pair and repeat
+            // The router calls pair.swap with empty callback data.
             IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output))
                 .swap(amount0Out, amount1Out, to, new bytes(0));
         }
