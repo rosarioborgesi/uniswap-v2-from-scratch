@@ -319,6 +319,157 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         _swap(amounts, path, to);
     }
 
+    // I need exactly 2000 USDC, take as little ETH as possible.
+    /// @notice Swaps the required input tokens along `path` to deliver exactly `amountOut` to `to`.
+    /// @dev Calculates the required input backward from the final output and reverts if it exceeds `amountInMax`.
+    /// The caller must approve the router to spend at least the calculated input amount of `path[0]`.
+    /// @param amountOut Exact amount of the final output token to send to the recipient.
+    /// @param amountInMax Maximum amount of the input token the caller is willing to spend.
+    /// @param path Ordered list of at least two token addresses. Each consecutive pair must have sufficient liquidity.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    /// @return amounts Token amounts in path order, starting with the input spent and ending with `amountOut`.
+    function swapTokensForExactTokens(
+        uint256 amountOut,
+        uint256 amountInMax,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        // The router calculates backward, then swaps forward. 
+        // For a path A → B → C, it works like this:
+        // 1. getAmountsIn starts with the exact amount of C you requested. 
+        // Using the B/C pool’s reserves and swap fee, it calculates how much B is needed. 
+        // It then uses the A/B pool to calculate how much A buys that B. 
+        // The result is [requiredA, requiredB, amountOut]
+        amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
+        // 2. The router checks amounts[0] <= amountInMax. 
+        // If the required A exceeds your cap, the transaction reverts
+        require(amounts[0] <= amountInMax, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
+        // 3. The router transfers requiredA from your balance directly to the A/B pair. 
+        // You must have approved the router to spend that amount.
+        TransferHelper.safeTransferFrom(
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
+        );
+        // 4. _swap then tells the A/B pair to send requiredB to the B/C pair, 
+        // and the B/C pair sends exactly amountOut of C to to.
+        _swap(amounts, path, to);
+    }
+
+    // If I spend exactly 1 ETH, how many tokens will I get?
+    /// @notice Swaps all ETH sent with the call for tokens and sends the final output to `to`.
+    /// @dev Reverts if the quoted final output is below `amountOutMin`. The router wraps `msg.value` into WETH
+    /// and transfers it to the first pair before executing the swaps.
+    /// @param amountOutMin Minimum acceptable final output, in the output token's base units.
+    /// @param path Ordered list of at least two token addresses starting with WETH. Each pair must have liquidity.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    /// @return amounts Amounts in path order, starting with `msg.value` in wei and followed by each hop's output.
+    function swapExactETHForTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external payable virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        // 1. The first token must be WETH because Uniswap V2 pairs trade ERC-20 tokens, 
+        // so the router needs to wrap the ETH before the first swap.
+        require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
+        // 2. Quote the swaps
+        // getAmountsOut starts with msg.value and uses each pair’s reserves and the 0.3% swap fee to calculate the outputs
+        amounts = UniswapV2Library.getAmountsOut(factory, msg.value, path);
+        // If the final amount is below amountOutMin, the transaction reverts
+        require(amounts[amounts.length - 1] >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT");
+        // Wrap msg.value ETH into WETH
+        IWETH(WETH).deposit{value: amounts[0]}();
+        // Transfer that WETH to the first pair
+        assert(IWETH(WETH).transfer(UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]));
+        // Execute the swap
+        _swap(amounts, path, to);
+    }
+
+    // How many tokens do I need to spend to receive exactly 1 ETH?
+    /// @notice Swaps the required input tokens for exactly `amountOut` wei of native ETH and sends it to `to`.
+    /// @dev Calculates the required input backward along the path and reverts if it exceeds `amountInMax`.
+    /// The caller must approve the router to spend the required input. The router unwraps the final WETH into ETH.
+    /// @param amountOut Exact amount of ETH to send to the recipient, in wei.
+    /// @param amountInMax Maximum amount of the input token the caller will spend, in its base units.
+    /// @param path Ordered list of at least two token addresses ending in WETH. Each pair must have sufficient liquidity.
+    /// @param to Recipient of the native ETH. A contract recipient must be able to receive ETH.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    /// @return amounts Amounts in path order, starting with the input spent and ending with `amountOut` in WETH.
+    function swapTokensForExactETH(
+        uint256 amountOut,
+        uint256 amountInMax,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        require(path[path.length - 1] == WETH, "UniswapV2Router: INVALID_PATH");
+        amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
+        require(amounts[0] <= amountInMax, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
+        TransferHelper.safeTransferFrom(
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
+        );
+        _swap(amounts, path, address(this));
+        IWETH(WETH).withdraw(amounts[amounts.length - 1]);
+        TransferHelper.safeTransferETH(to, amounts[amounts.length - 1]);
+    }
+
+    // If I spend exactly this many tokens, how much ETH will I receive?
+    /// @notice Swaps exactly `amountIn` input tokens for native ETH and sends the ETH to `to`.
+    /// @dev The caller must approve the router to spend `amountIn` of `path[0]`. The router checks the
+    /// quoted output against `amountOutMin` before pulling tokens, then unwraps the final WETH for payout.
+    /// @param amountIn Exact input token amount to spend, in the token's base units.
+    /// @param amountOutMin Minimum acceptable ETH payout, in wei.
+    /// @param path Ordered list of at least two token addresses ending in WETH. Each pair must have sufficient liquidity.
+    /// @param to Recipient of the native ETH. A contract recipient must be able to receive ETH.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    /// @return amounts Amounts in path order, starting with `amountIn` and ending with the ETH payout in wei.
+    function swapExactTokensForETH(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        require(path[path.length - 1] == WETH, "UniswapV2Router: INVALID_PATH");
+        amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
+        require(amounts[amounts.length - 1] >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT");
+        TransferHelper.safeTransferFrom(
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
+        );
+        _swap(amounts, path, address(this));
+        IWETH(WETH).withdraw(amounts[amounts.length - 1]);
+        TransferHelper.safeTransferETH(to, amounts[amounts.length - 1]);
+    }
+
+    // How much ETH do I need to spend to buy exactly this many tokens?
+    /// @notice Buys exactly `amountOut` output tokens for `to`, spending at most `msg.value` wei.
+    /// @dev Reverts if the required ETH exceeds `msg.value`. The router wraps only the required ETH into WETH
+    /// and refunds any excess ETH to the caller after the swap.
+    /// @param amountOut Exact amount of the final token to deliver, in that token's base units.
+    /// @param path Ordered list of at least two token addresses starting with WETH. Each pair must have sufficient liquidity.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    /// @return amounts Amounts in path order, starting with the ETH spent in wei and ending with `amountOut`.
+    function swapETHForExactTokens(
+        uint256 amountOut,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external payable virtual override ensure(deadline) returns (uint256[] memory amounts) {
+        require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
+        amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
+        require(amounts[0] <= msg.value, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
+        IWETH(WETH).deposit{value: amounts[0]}();
+        assert(IWETH(WETH).transfer(UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]));
+        _swap(amounts, path, to);
+        // Refund excess ETH
+        if (msg.value > amounts[0]) {
+            TransferHelper.safeTransferETH(msg.sender, msg.value - amounts[0]);
+        }
+    }
+
     ////////////////////////////////////////////
     //            Internal Functions          //
     ////////////////////////////////////////////

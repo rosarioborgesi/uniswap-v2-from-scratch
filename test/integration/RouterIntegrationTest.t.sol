@@ -5,6 +5,7 @@ import {Test} from "forge-std/Test.sol";
 import {UniswapV2Factory} from "../../src/v2-core/UniswapV2Factory.sol";
 import {IUniswapV2Pair} from "../../src/v2-core/interfaces/IUniswapV2Pair.sol";
 import {UniswapV2Router02} from "../../src/v2-periphery/UniswapV2Router02.sol";
+import {IUniswapV2Router02} from "../../src/v2-periphery/interfaces/IUniswapV2Router02.sol";
 import {UniswapV2Library} from "../../src/v2-periphery/libraries/UniswapV2Library.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
 import {MockWETH} from "../mocks/MockWETH.sol";
@@ -29,6 +30,16 @@ contract RouterIntegrationTest is Test {
         weth = new MockWETH();
         factory = new UniswapV2Factory(address(this));
         router = new UniswapV2Router02(address(factory), address(weth));        
+    }    
+
+    function _seedSwapPair(MockERC20 firstToken, MockERC20 secondToken, uint256 firstAmount, uint256 secondAmount)
+        internal
+    {
+        firstToken.approve(address(router), firstAmount);
+        secondToken.approve(address(router), secondAmount);
+        router.addLiquidity(
+            address(firstToken), address(secondToken), firstAmount, secondAmount, 0, 0, address(this), block.timestamp
+        );
     }
 
     /////////////////////////////////////////
@@ -380,5 +391,210 @@ contract RouterIntegrationTest is Test {
             UniswapV2Library.getReserves(address(factory), address(tokenB), address(tokenC));
         assertEq(reserveBInBC, 1_994 ether + tokenBAmount); // 3,994 B
         assertEq(reserveC, 3_000 ether - expectedTokenCOut); // 1,500 C
-    }    
+    }
+
+    ////////////////////////////////////////////////
+    //           swapTokensForExactTokens         //
+    ////////////////////////////////////////////////
+    // The test asks to deliver 2,000 B while spending at most 1,001 A
+    function test_SwapTokensForExactTokensSingleHop() public {
+        // 1. Seed the pair
+        // The test seeds the pool with 997 A and 4,000 B.
+        _seedSwapPair(tokenA, tokenB, 997 ether, 4_000 ether);
+
+        address[] memory path = new address[](2);
+        path[0] = address(tokenA);
+        path[1] = address(tokenB);
+
+        uint256 amountOut = 2_000 ether;
+        uint256 amountInMax = 1_001 ether;
+        // After the 0.3% fee, buying 2,000 B reserve takes 1,000 A plus one base unit for rounding.
+        uint256 requiredA = 1_000 ether + 1;
+        
+        // The test gives provider 1,001 A
+        tokenA.transfer(provider, amountInMax);
+
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountInMax);
+        // provider asks to deliver 2,000 B tokens (amountOut) to recipient while spending at most 1,001 A (amountInMax)
+        uint256[] memory amounts =
+            router.swapTokensForExactTokens(amountOut, amountInMax, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(amounts[0], requiredA);
+        assertEq(tokenA.balanceOf(provider), 1 ether - 1); // amountInMax - requiredA = 1,001 ether - (1,000 ether + 1) = 1 ether - 1 
+        assertEq(tokenB.balanceOf(recipient), amountOut); // recipient receives 2,000 token B
+
+        address pairAB = factory.getPair(address(tokenA), address(tokenB));
+        assertEq(tokenA.balanceOf(pairAB), 997 ether + requiredA); // 997 ether + ( 1,000 ether + 1) = 1,997 ether + 1
+        assertEq(tokenB.balanceOf(pairAB), 2_000 ether); // 4,000 - 2,000 = 2,000
+    }
+
+    // Checks that the router can deliver exactly 1,500 C through A → B → C while spending at most 1,001 A.
+    function test_SwapTokensForExactTokensTwoHops() public {
+        // 1. Set Up the pools
+        // The A/B pool starts with 997 A and 4,000 B.
+        _seedSwapPair(tokenA, tokenB, 997 ether, 4_000 ether);
+        // The B/C pool starts with 1,994 B and 3,000 C.
+        _seedSwapPair(tokenB, tokenC, 1_994 ether, 3_000 ether);
+
+        address[] memory path = new address[](3);
+        path[0] = address(tokenA);
+        path[1] = address(tokenB);
+        path[2] = address(tokenC);
+
+        // 2. Calculate backward. 
+        // To get 1,500 C from B/C, the router needs 2,000 ether + 1 of B (requiredB). 
+        // To get that much B from A/B, it needs 1,000 ether + 2 of A (requiredA). 
+        // The + 1 and + 2 are base units from the exact-output calculation.
+
+        uint256 amountOut = 1_500 ether;
+        uint256 amountInMax = 1_001 ether;
+        // Buying half the C reserve takes 2,000 B plus one base unit.
+        // Buying that amount of B takes 1,000 A plus two base units after rounding.
+        uint256 requiredB = 2_000 ether + 1;
+        uint256 requiredA = 1_000 ether + 2;
+
+        // The provider receives 1,001 A.
+        tokenA.transfer(provider, amountInMax);
+
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountInMax);
+        // 3. Swap Forward
+        // The router pulls the required A from the provider (1,000 ether + 2)
+        // The A/B pool sends B directly to the B/C pool, which sends exactly 1,500 C to the recipient.
+        uint256[] memory amounts =
+            router.swapTokensForExactTokens(amountOut, amountInMax, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(amounts[0], requiredA); //  1,000 ether + 2
+        assertEq(amounts[1], requiredB); // 2,000 ether + 1
+        assertEq(tokenA.balanceOf(provider), amountInMax - requiredA); // 1_001 ether - (1_000 ether + 2) = 1 ether - 2 
+        assertEq(tokenC.balanceOf(recipient), amountOut); // 1,500 ether
+
+        // The A/B pool sends B directly to the B/C pool.
+        address pairAB = factory.getPair(address(tokenA), address(tokenB));
+        address pairBC = factory.getPair(address(tokenB), address(tokenC));
+        assertEq(tokenA.balanceOf(pairAB), 997 ether + requiredA); // 1,997 ether + 2
+        assertEq(tokenB.balanceOf(pairAB), 4_000 ether - requiredB); // 2,000 ether - 1
+        assertEq(tokenB.balanceOf(pairBC), 1_994 ether + requiredB); // 3,994 ether + 1
+        assertEq(tokenC.balanceOf(pairBC), 3_000 ether - amountOut); // 1,500 ether
+    }
+
+    /////////////////////////////////////////////
+    //           swapExactETHForTokens         //
+    /////////////////////////////////////////////
+    // Spend exactly 1 ETH and give the recipient at least 200 token A.
+    function test_SwapExactETHForTokensSingleHop() public {
+        vm.deal(address(this), 0.997 ether);
+        tokenA.approve(address(router), 400 ether);
+        // 1. Set up the pool
+        // Seed the WETH/A pair with 0.997 WETH and 400 token A
+        router.addLiquidityETH{value: 0.997 ether}(address(tokenA), 400 ether, 0, 0, address(this), block.timestamp);
+
+        address[] memory path = new address[](2);
+        path[0] = address(weth);
+        path[1] = address(tokenA);
+
+        // 2. Calculate the expected output. 
+        // For pricing, Uniswap V2 applies a 0.3% fee to the 1 ETH input. 
+        // That gives an effective input of 0.997 WETH, exactly equal to the starting WETH reserve. 
+        // The swap formula then gives 400 × 0.997 / (0.997 + 0.997) = 200 token A.
+
+        uint256 expectedOut = 200 ether;
+        vm.deal(provider, 1 ether);
+        vm.prank(provider);
+        // The provider wants to swap 1 ETH and sets the minimum output to 200 token A that recipient will receive
+        uint256[] memory amounts = router.swapExactETHForTokens{value: 1 ether}(
+            expectedOut, path, recipient, block.timestamp
+        );
+
+        assertEq(amounts[0], 1 ether);
+        assertEq(amounts[1], expectedOut); // 200 token A
+        assertEq(provider.balance, 0); // The provider spent all his ETH
+        assertEq(tokenA.balanceOf(recipient), expectedOut); // The recipient recieves 200 token A
+        
+        address pair = factory.getPair(address(weth), address(tokenA));
+        assertEq(weth.balanceOf(pair), 1.997 ether); // 0.997 WETH initially plus 1 WETH from the swap
+        assertEq(tokenA.balanceOf(pair), 400 ether - expectedOut); // 400 ether - 200 ether
+    }
+
+
+    /////////////////////////////////////////////
+    //           swapTokensForExactETH         //
+    /////////////////////////////////////////////
+    function _seedTokenAToWETHPath() internal returns (address[] memory path) {
+        vm.deal(address(this), 2 ether);
+        tokenA.approve(address(router), 997 ether);
+        router.addLiquidityETH{value: 2 ether}(address(tokenA), 997 ether, 0, 0, address(this), block.timestamp);
+
+        path = new address[](2);
+        path[0] = address(tokenA);
+        path[1] = address(weth);
+    }
+
+    // Buy exactly 1 ETH with my token A, and spend at most 1,010 tokens
+    function test_SwapTokensForExactETHSingleHop() public {
+        address[] memory path = _seedTokenAToWETHPath();
+        uint256 amountOut = 1 ether;
+        uint256 amountInMax = 1_010 ether;
+        tokenA.transfer(provider, amountInMax);
+
+        // Buy exactly 1 ETH, allowing the router to spend up to 1,010 token A.
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountInMax);
+        router.swapTokensForExactETH(amountOut, amountInMax, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        // The exact-output quote adds one token base unit to the calculated input.
+        uint256 requiredInput = 1_000 ether + 1;
+        assertEq(tokenA.balanceOf(provider), amountInMax - requiredInput);
+        assertEq(recipient.balance, amountOut);
+    }
+
+    /////////////////////////////////////////////
+    //           swapExactTokensForETH         //
+    /////////////////////////////////////////////
+    // Spend exactly 1,000 token A and send the recipient at least 0.99 ETH.
+    function test_SwapExactTokensForETHSingleHop() public {
+        address[] memory path = _seedTokenAToWETHPath();
+        uint256 amountIn = 1_000 ether;
+        uint256 amountOutMin = 0.99 ether;
+        tokenA.transfer(provider, amountIn);
+
+        // Spend exactly 1,000 token A and accept at least 0.99 ETH.
+        vm.startPrank(provider);
+        tokenA.approve(address(router), amountIn);
+        router.swapExactTokensForETH(amountIn, amountOutMin, path, recipient, block.timestamp);
+        vm.stopPrank();
+
+        assertEq(tokenA.balanceOf(provider), 0);
+        assertEq(recipient.balance, 1 ether);
+    }
+
+    /////////////////////////////////////////////
+    //           swapETHForExactTokens         //
+    /////////////////////////////////////////////
+    // The caller sends 2 ETH to buy exactly 200 token A through one pool.
+    function test_SwapETHForExactTokensSingleHop() public {
+        vm.deal(address(this), 0.997 ether);
+        tokenA.approve(address(router), 400 ether);
+        router.addLiquidityETH{value: 0.997 ether}(address(tokenA), 400 ether, 0, 0, address(this), block.timestamp);
+
+        address[] memory path = new address[](2);
+        path[0] = address(weth);
+        path[1] = address(tokenA);
+
+        // Buy exactly 200 token A with up to 2 ETH.
+        uint256 amountOut = 200 ether;
+        uint256 ethBudget = 2 ether;
+        vm.deal(provider, ethBudget);
+        vm.prank(provider);
+        router.swapETHForExactTokens{value: ethBudget}(amountOut, path, recipient, block.timestamp);
+
+        // Buying half the token reserve costs 1 ETH plus one wei for exact-output rounding.
+        uint256 requiredETH = 1 ether + 1;
+        assertEq(tokenA.balanceOf(recipient), amountOut);
+        assertEq(provider.balance, ethBudget - requiredETH);
+    }
 }
