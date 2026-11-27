@@ -5,6 +5,10 @@ pragma solidity 0.8.35;
 import {IUniswapV2Pair} from "../../v2-core/interfaces/IUniswapV2Pair.sol";
 import {UniswapV2Pair} from "../../v2-core/UniswapV2Pair.sol";
 
+/// @notice Provides helpers for finding Uniswap V2 pairs and quoting liquidity deposits and swaps.
+/// @dev Derives pair addresses from the factory and sorted token addresses, then reads reserves in
+/// the requested token order. Uses reserve ratios to quote deposits and accounts for the 0.3% swap fee
+/// when calculating amounts for exact-input or exact-output swaps across one or more pairs.
 library UniswapV2Library {
     /// @notice Returns sorted token addresses, used to handle return values from pairs sorted in this order.
     /// @dev Reverts if tokenA == tokenB or either address is zero.
@@ -90,9 +94,9 @@ library UniswapV2Library {
         amountIn = numerator / denominator + 1;
     }
 
-    // This answers “If I start with this much of the first token, 
-    // how much will I get at each hop?” 
-    // It quotes an exact-input swap using each pair’s current reserves, the 0.3% swap fee, and rounding down. 
+    // This answers “If I start with this much of the first token,
+    // how much will I get at each hop?”
+    // It quotes an exact-input swap using each pair’s current reserves, the 0.3% swap fee, and rounding down.
     // Each hop’s output becomes the next hop’s input.
     /// @notice Performs chained getAmountOut calculations on any number of pairs.
     /// @dev path is an array of token addresses representing the swap route.
@@ -110,8 +114,8 @@ library UniswapV2Library {
         }
     }
 
-    // This answers “If I want exactly this much of the final token, 
-    // how much do I need to start with?” 
+    // This answers “If I want exactly this much of the final token,
+    // how much do I need to start with?”
     // It takes the desired output and a token path, then works backward through the pairs.
     // Each step uses getAmountIn to account for the pair’s reserves and the 0.3% swap fee.
     /// @notice Performs chained getAmountIn calculations on any number of pairs.

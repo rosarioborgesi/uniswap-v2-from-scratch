@@ -90,7 +90,7 @@ contract UniswapV2LibraryUnitTest is Test {
     function test_GetAmountsOutUsesEachHopOutputAsTheNextInput() public {
         (UniswapV2Factory factory, address[] memory path) = _twoHopRoute();
 
-        uint256[] memory amounts = UniswapV2Library.getAmountsOut(address(factory), 1_000, path);        
+        uint256[] memory amounts = UniswapV2Library.getAmountsOut(address(factory), 1_000, path);
         // Hop	    Pool reserves	        Input	    Quoted output
         // A → B	10,000 A and 40,000 B	1,000 A	    3,626 B
         // B → C	20,000 B and 50,000 C	3,626 B	    7,654 C

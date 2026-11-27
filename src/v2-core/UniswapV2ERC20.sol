@@ -103,7 +103,7 @@ contract UniswapV2ERC20 is IUniswapV2ERC20 {
 
     ////////////////////////////////////////////
     //            External Functions          //
-    //////////////////////////////////////////// 
+    ////////////////////////////////////////////
     /// @notice Sets the amount of LP tokens `spender` may transfer from the caller's balance.
     /// @param spender The account authorized to spend the caller's LP tokens.
     /// @param value The new allowance in base units. Use `type(uint256).max` for unlimited allowance.

@@ -38,7 +38,7 @@ contract MockERC20 {
         return true;
     }
 
-    function _transfer(address from, address to, uint256 value) private {
+    function _transfer(address from, address to, uint256 value) internal virtual {
         balanceOf[from] -= value;
         balanceOf[to] += value;
         emit Transfer(from, to, value);

@@ -23,6 +23,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.35;
 
+import {IERC20} from "../v2-core/interfaces/IERC20.sol";
 import {IUniswapV2Factory} from "../v2-core/interfaces/IUniswapV2Factory.sol";
 import {IUniswapV2Pair} from "../v2-core/interfaces/IUniswapV2Pair.sol";
 import {IUniswapV2Router02} from "./interfaces/IUniswapV2Router02.sol";
@@ -30,7 +31,9 @@ import {IWETH} from "./interfaces/IWETH.sol";
 import {UniswapV2Library} from "./libraries/UniswapV2Library.sol";
 import {TransferHelper} from "./libraries/TransferHelper.sol";
 
-/// @notice Partial Router02 port: token liquidity, exact-input swaps, and price/output quotes only.
+/// @notice Lets users add or remove liquidity from Uniswap V2 pairs and swap tokens along a path they choose.
+/// @dev Coordinates token transfers and calls to each pair. For operations involving native ETH,
+/// the router wraps incoming ETH into WETH or unwraps WETH before sending ETH to the recipient.
 contract UniswapV2Router02 is IUniswapV2Router02 {
     /////////////////////////////////////////
     //            State Variables          //
@@ -62,7 +65,7 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
 
     ////////////////////////////////////////////
     //            External Functions          //
-    //////////////////////////////////////////// 
+    ////////////////////////////////////////////
     /// @notice Adds liquidity to a token pair and mints LP tokens to the recipient.
     /// @dev Creates the pair if needed and uses both desired amounts when both reserves are zero.
     /// Otherwise, uses the reserve ratio to quote one token amount and checks it against its minimum.
@@ -121,9 +124,17 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         uint256 amountETHMin,
         address to,
         uint256 deadline
-    ) external payable virtual override ensure(deadline) returns (uint256 amountToken, uint256 amountETH, uint256 liquidity) {
+    )
+        external
+        payable
+        virtual
+        override
+        ensure(deadline)
+        returns (uint256 amountToken, uint256 amountETH, uint256 liquidity)
+    {
         // Calculate the deposit amounts and create the pair if it doesn't exist
-        (amountToken, amountETH) = _addLiquidity(token, WETH, amountTokenDesired, msg.value, amountTokenMin, amountETHMin);
+        (amountToken, amountETH) =
+            _addLiquidity(token, WETH, amountTokenDesired, msg.value, amountTokenMin, amountETHMin);
         // Compute the pair address
         address pair = UniswapV2Library.pairFor(factory, token, WETH);
         // transfers amountToken of the ERC-20 token from caller to the pair
@@ -136,7 +147,7 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         // The pair then mints LP tokens to to
         liquidity = IUniswapV2Pair(pair).mint(to);
         // refund excess ETH
-        if(msg.value > amountETH) {
+        if (msg.value > amountETH) {
             TransferHelper.safeTransferETH(msg.sender, msg.value - amountETH);
         }
     }
@@ -199,7 +210,8 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
     ) public virtual override ensure(deadline) returns (uint256 amountToken, uint256 amountETH) {
         // Redeem the LP tokens
         //  address(this) receives amountToken (ERC-20) and amountETH (WETH)
-        (amountToken, amountETH) = removeLiquidity(token, WETH, liquidity, amountTokenMin, amountETHMin, address(this), deadline);
+        (amountToken, amountETH) =
+            removeLiquidity(token, WETH, liquidity, amountTokenMin, amountETHMin, address(this), deadline);
         // Transfer ERC-20 amountToken to the recipient (to)
         TransferHelper.safeTransfer(token, to, amountToken);
         // Unwrap WETH
@@ -284,7 +296,7 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         (amountToken, amountETH) = removeLiquidityETH(token, liquidity, amountTokenMin, amountETHMin, to, deadline);
     }
 
-    // "I want to spend exactly 1 ETH, give me as much USDC as possible" 
+    // "I want to spend exactly 1 ETH, give me as much USDC as possible"
     /// @notice Swaps an exact amount of the input token along the given path and sends the final output to `to`.
     /// @dev The caller must approve the router to spend `amountIn` of `path[0]`.
     /// Reverts if the quoted final output is below `amountOutMin`.
@@ -312,9 +324,9 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
         // 3. Executes each hop
-        // The first pair already has the input tokens, 
-        // so _swap tells it how much of the next token to send out. 
-        // Each intermediate pair sends its output directly to the next pair, 
+        // The first pair already has the input tokens,
+        // so _swap tells it how much of the next token to send out.
+        // Each intermediate pair sends its output directly to the next pair,
         // and the last pair sends its output to to.
         _swap(amounts, path, to);
     }
@@ -336,22 +348,22 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         address to,
         uint256 deadline
     ) external virtual override ensure(deadline) returns (uint256[] memory amounts) {
-        // The router calculates backward, then swaps forward. 
+        // The router calculates backward, then swaps forward.
         // For a path A → B → C, it works like this:
-        // 1. getAmountsIn starts with the exact amount of C you requested. 
-        // Using the B/C pool’s reserves and swap fee, it calculates how much B is needed. 
-        // It then uses the A/B pool to calculate how much A buys that B. 
+        // 1. getAmountsIn starts with the exact amount of C you requested.
+        // Using the B/C pool’s reserves and swap fee, it calculates how much B is needed.
+        // It then uses the A/B pool to calculate how much A buys that B.
         // The result is [requiredA, requiredB, amountOut]
         amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
-        // 2. The router checks amounts[0] <= amountInMax. 
+        // 2. The router checks amounts[0] <= amountInMax.
         // If the required A exceeds your cap, the transaction reverts
         require(amounts[0] <= amountInMax, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
-        // 3. The router transfers requiredA from your balance directly to the A/B pair. 
+        // 3. The router transfers requiredA from your balance directly to the A/B pair.
         // You must have approved the router to spend that amount.
         TransferHelper.safeTransferFrom(
             path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
-        // 4. _swap then tells the A/B pair to send requiredB to the B/C pair, 
+        // 4. _swap then tells the A/B pair to send requiredB to the B/C pair,
         // and the B/C pair sends exactly amountOut of C to to.
         _swap(amounts, path, to);
     }
@@ -365,13 +377,15 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
     /// @param to Recipient of the final output token.
     /// @param deadline Latest block timestamp at which the swap can succeed.
     /// @return amounts Amounts in path order, starting with `msg.value` in wei and followed by each hop's output.
-    function swapExactETHForTokens(
-        uint256 amountOutMin,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external payable virtual override ensure(deadline) returns (uint256[] memory amounts) {
-        // 1. The first token must be WETH because Uniswap V2 pairs trade ERC-20 tokens, 
+    function swapExactETHForTokens(uint256 amountOutMin, address[] calldata path, address to, uint256 deadline)
+        external
+        payable
+        virtual
+        override
+        ensure(deadline)
+        returns (uint256[] memory amounts)
+    {
+        // 1. The first token must be WETH because Uniswap V2 pairs trade ERC-20 tokens,
         // so the router needs to wrap the ETH before the first swap.
         require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
         // 2. Quote the swaps
@@ -452,12 +466,14 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
     /// @param to Recipient of the final output token.
     /// @param deadline Latest block timestamp at which the swap can succeed.
     /// @return amounts Amounts in path order, starting with the ETH spent in wei and ending with `amountOut`.
-    function swapETHForExactTokens(
-        uint256 amountOut,
-        address[] calldata path,
-        address to,
-        uint256 deadline
-    ) external payable virtual override ensure(deadline) returns (uint256[] memory amounts) {
+    function swapETHForExactTokens(uint256 amountOut, address[] calldata path, address to, uint256 deadline)
+        external
+        payable
+        virtual
+        override
+        ensure(deadline)
+        returns (uint256[] memory amounts)
+    {
         require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
         amounts = UniswapV2Library.getAmountsIn(factory, amountOut, path);
         require(amounts[0] <= msg.value, "UniswapV2Router: EXCESSIVE_INPUT_AMOUNT");
@@ -468,6 +484,156 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         if (msg.value > amounts[0]) {
             TransferHelper.safeTransferETH(msg.sender, msg.value - amounts[0]);
         }
+    }
+
+    /// @notice Swaps an exact amount of the first token for at least `amountOutMin` of the final token,
+    /// supporting tokens that charge a transfer fee at any hop.
+    /// @dev The caller must approve the router to spend `amountIn`. The router computes each hop's output
+    /// from the input its pair receives and checks the recipient's final balance increase against `amountOutMin`.
+    /// @param amountIn Amount of the first token to transfer from the caller, before transfer fees.
+    /// @param amountOutMin Minimum amount of the final token the recipient must receive after transfer fees.
+    /// @param path Ordered list of at least two token addresses with a liquid pair for each hop.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external virtual override ensure(deadline) {
+        // 1. Fund the pair
+        // Transfer amountIn from msg.sender directly to the first pair
+        TransferHelper.safeTransferFrom(
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amountIn
+        );
+        // 2. Price each hop using what the pair received
+        // The router calculates actualInput = pairBalance - recordedReserve and uses that amount to calculate the output.
+        // Each intermediate pair sends its output directly to the next pair.
+        // The last pair sends its output to to.
+        IERC20 outputToken = IERC20(path[path.length - 1]);
+        uint256 balanceBefore = outputToken.balanceOf(to);
+        _swapSupportingFeeOnTransferTokens(path, to);
+        // 3. Check what the recipient received
+        // The router snapshots the recipient’s final-token balance before running the hops and
+        // checks the increase afterward.
+        // If the increase is below amountOutMin, the entire transaction reverts
+        require(
+            outputToken.balanceOf(to) - balanceBefore >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT"
+        );
+    }
+
+    /// @notice Swaps all ETH sent with the call for tokens, supporting fee-on-transfer tokens along the path.
+    /// @dev Wraps `msg.value` into WETH and sends it to the first pair. Each hop calculates its output from the
+    /// input its pair receives. Reverts if `to` receives less than `amountOutMin` after transfer fees.
+    /// @param amountOutMin Minimum increase in the recipient's final-token balance, in the token's base units.
+    /// @param path Ordered list of at least two token addresses starting with WETH, with a liquid pair for each hop.
+    /// @param to Recipient of the final output token.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    function swapExactETHForTokensSupportingFeeOnTransferTokens(
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external payable virtual override ensure(deadline) {
+        require(path[0] == WETH, "UniswapV2Router: INVALID_PATH");
+        uint256 amountIn = msg.value;
+        IWETH(WETH).deposit{value: amountIn}();
+        assert(IWETH(WETH).transfer(UniswapV2Library.pairFor(factory, path[0], path[1]), amountIn));
+        IERC20 outputToken = IERC20(path[path.length - 1]);
+        uint256 balanceBefore = outputToken.balanceOf(to);
+        _swapSupportingFeeOnTransferTokens(path, to);
+        require(
+            outputToken.balanceOf(to) - balanceBefore >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT"
+        );
+    }
+
+    /// @notice Swaps an exact amount of tokens for native ETH, supporting fee-on-transfer tokens along the path.
+    /// @dev The caller must approve the router to spend `amountIn`. Each hop calculates its output from the input
+    /// its pair receives. Reverts if the router's total WETH balance after the swap is below `amountOutMin`.
+    /// The router unwraps that entire balance and sends the ETH to `to`.
+    /// @param amountIn Amount of the first token to transfer from the caller, before transfer fees, in base units.
+    /// @param amountOutMin Minimum amount of native ETH the recipient must receive, in wei.
+    /// @param path Ordered list of at least two token addresses ending with WETH, with a liquid pair for each hop.
+    /// @param to Recipient of the native ETH.
+    /// @param deadline Latest block timestamp at which the swap can succeed.
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
+        uint256 amountIn,
+        uint256 amountOutMin,
+        address[] calldata path,
+        address to,
+        uint256 deadline
+    ) external virtual override ensure(deadline) {
+        require(path[path.length - 1] == WETH, "UniswapV2Router: INVALID_PATH");
+        TransferHelper.safeTransferFrom(
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amountIn
+        );
+        _swapSupportingFeeOnTransferTokens(path, address(this));
+        uint256 amountOut = IERC20(WETH).balanceOf(address(this));
+        require(amountOut >= amountOutMin, "UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT");
+        IWETH(WETH).withdraw(amountOut);
+        TransferHelper.safeTransferETH(to, amountOut);
+    }
+
+    /// @notice Redeems token/WETH LP tokens and sends the token and native ETH to `to`.
+    /// @dev The caller must approve the router to spend `liquidity` LP tokens. The router forwards its full
+    /// balance of `token` and unwraps the WETH received from the pair. Transfer fees can reduce the amount
+    /// of `token` the recipient receives below `amountTokenMin`.
+    /// @param token Address of the ERC-20 token paired with WETH.
+    /// @param liquidity Amount of LP tokens to redeem, in base units.
+    /// @param amountTokenMin Minimum token amount reported by the pair before transfer fees, in base units.
+    /// @param amountETHMin Minimum native ETH to send to the recipient, in wei.
+    /// @param to Recipient of the token and native ETH.
+    /// @param deadline Latest block timestamp at which the withdrawal can succeed.
+    /// @return amountETH Amount of native ETH sent to the recipient, in wei.
+    function removeLiquidityETHSupportingFeeOnTransferTokens(
+        address token,
+        uint256 liquidity,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline
+    ) public virtual override ensure(deadline) returns (uint256 amountETH) {
+        (, amountETH) = removeLiquidity(token, WETH, liquidity, amountTokenMin, amountETHMin, address(this), deadline);
+        TransferHelper.safeTransfer(token, to, IERC20(token).balanceOf(address(this)));
+        IWETH(WETH).withdraw(amountETH);
+        TransferHelper.safeTransferETH(to, amountETH);
+    }
+
+    /// @notice Redeems token/WETH LP tokens for token and native ETH using a signed LP-token permit.
+    /// @dev The permit uses the pair's EIP-712 domain and the caller's current nonce, with the caller as owner
+    /// and the router as spender. If the withdrawal reverts, the permit approval and nonce update revert too.
+    /// The router forwards its full balance of `token`. Transfer fees can reduce the amount the recipient
+    /// receives below `amountTokenMin`.
+    /// @param token Address of the ERC-20 token paired with WETH.
+    /// @param liquidity Amount of LP tokens to redeem, in base units.
+    /// @param amountTokenMin Minimum token amount reported by the pair before transfer fees, in base units.
+    /// @param amountETHMin Minimum native ETH to send to the recipient, in wei.
+    /// @param to Recipient of the token and native ETH.
+    /// @param deadline Latest block timestamp at which both the permit and withdrawal can succeed.
+    /// @param approveMax Set to `true` for an unlimited LP-token allowance or `false` to approve exactly `liquidity`.
+    /// @param v Recovery identifier of the permit signature.
+    /// @param r R component of the permit signature.
+    /// @param s S component of the permit signature.
+    /// @return amountETH Amount of native ETH sent to the recipient, in wei.
+    function removeLiquidityETHWithPermitSupportingFeeOnTransferTokens(
+        address token,
+        uint256 liquidity,
+        uint256 amountTokenMin,
+        uint256 amountETHMin,
+        address to,
+        uint256 deadline,
+        bool approveMax,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual override returns (uint256 amountETH) {
+        address pair = UniswapV2Library.pairFor(factory, token, WETH);
+        uint256 value = approveMax ? type(uint256).max : liquidity;
+        IUniswapV2Pair(pair).permit(msg.sender, address(this), value, deadline, v, r, s);
+        amountETH = removeLiquidityETHSupportingFeeOnTransferTokens(
+            token, liquidity, amountTokenMin, amountETHMin, to, deadline
+        );
     }
 
     ////////////////////////////////////////////
@@ -538,9 +704,9 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
             // Otherwise, it sets amount0Out. The other field is zero.
             (uint256 amount0Out, uint256 amount1Out) =
                 input == token0 ? (uint256(0), amountOut) : (amountOut, uint256(0));
-            // 3. Choose where the output goes 
-            // On an intermediate hop, 
-            // the current pair sends its output directly to the next pair, 
+            // 3. Choose where the output goes
+            // On an intermediate hop,
+            // the current pair sends its output directly to the next pair,
             // where it becomes the input for that hop.
             // On the last hop, the pair sends the output to _to.
             address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
@@ -548,6 +714,43 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
             // The router calls pair.swap with empty callback data.
             IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output))
                 .swap(amount0Out, amount1Out, to, new bytes(0));
+        }
+    }
+
+    /// @notice Executes swaps along a token path that can include fee-on-transfer tokens.
+    /// @dev The caller must fund the first pair before calling and enforce any minimum received amount.
+    /// Each hop computes its input as the pair's input-token balance minus its recorded reserve.
+    /// Intermediate pairs send their output directly to the next pair.
+    /// @param path Ordered token addresses, with at least two tokens and a liquid pair for each hop.
+    /// @param _to Recipient of the final output token.
+    function _swapSupportingFeeOnTransferTokens(address[] memory path, address _to) internal virtual {
+        for (uint256 i; i < path.length - 1; i++) {
+            // 1. Find the pair and its reserves.
+            (address input, address output) = (path[i], path[i + 1]);
+            (address token0,) = UniswapV2Library.sortTokens(input, output);
+            IUniswapV2Pair pair = IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output));
+
+            uint256 amountOutput;
+            {
+                // Get reserves:
+                (uint256 reserve0, uint256 reserve1,) = pair.getReserves();
+                (uint256 reserveIn, uint256 reserveOut) = input == token0 ? (reserve0, reserve1) : (reserve1, reserve0);
+                // 2. Read actual input amount:
+                // The pair’s live balance includes the incoming transfer,
+                // while its recorded reserve is still the old value.
+                // The difference is the amount available for the swap after any transfer fee.
+                uint256 amountInput = IERC20(input).balanceOf(address(pair)) - reserveIn;
+                // Calculate output:
+                // getAmountOut prices that input using the two reserves and the pool’s 0.3% swap fee.
+                amountOutput = UniswapV2Library.getAmountOut(amountInput, reserveIn, reserveOut);
+            }
+            // Determine direction:
+            (uint256 amount0Out, uint256 amount1Out) =
+                input == token0 ? (uint256(0), amountOutput) : (amountOutput, uint256(0));
+            // Determine recipient (next pair or final destination):
+            address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
+            // 3. Execute the swap
+            pair.swap(amount0Out, amount1Out, to, new bytes(0));
         }
     }
 
@@ -575,6 +778,16 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         return UniswapV2Library.getAmountOut(amountIn, reserveIn, reserveOut);
     }
 
+    function getAmountIn(uint256 amountOut, uint256 reserveIn, uint256 reserveOut)
+        public
+        pure
+        virtual
+        override
+        returns (uint256 amountIn)
+    {
+        return UniswapV2Library.getAmountIn(amountOut, reserveIn, reserveOut);
+    }
+
     function getAmountsOut(uint256 amountIn, address[] memory path)
         public
         view
@@ -583,5 +796,15 @@ contract UniswapV2Router02 is IUniswapV2Router02 {
         returns (uint256[] memory amounts)
     {
         return UniswapV2Library.getAmountsOut(factory, amountIn, path);
+    }
+
+    function getAmountsIn(uint256 amountOut, address[] memory path)
+        public
+        view
+        virtual
+        override
+        returns (uint256[] memory amounts)
+    {
+        return UniswapV2Library.getAmountsIn(factory, amountOut, path);
     }
 }

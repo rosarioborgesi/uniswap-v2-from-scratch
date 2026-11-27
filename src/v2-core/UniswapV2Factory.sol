@@ -6,6 +6,10 @@ import "./interfaces/IUniswapV2Factory.sol";
 import "./UniswapV2Pair.sol";
 import "./interfaces/IUniswapV2Pair.sol";
 
+/// @notice Creates and tracks Uniswap V2 liquidity pools, with one pair per combination of two tokens.
+/// @dev Anyone can create a new pair. The factory uses CREATE2 to deploy it at a deterministic address
+/// and registers it for lookup in either token order. The factory also stores the protocol fee recipient
+/// for its pairs. Only `feeToSetter` can change that recipient, and setting it to the zero address disables the fee.
 contract UniswapV2Factory is IUniswapV2Factory {
     address public feeTo;
     address public feeToSetter;

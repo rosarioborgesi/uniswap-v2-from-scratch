@@ -102,7 +102,7 @@ contract UniswapV2Router02UnitTest is Test {
     // Checks that _swap sends the requested amount of token B to the recipient after the caller funds the A/B pair.
     function test_SwapSingleHopSendsTokenBToRecipient() public {
         // 1. Seed the pair
-        // _seedPair creates the A/B pair, deposits 10,000 units of each token, 
+        // _seedPair creates the A/B pair, deposits 10,000 units of each token,
         // and mints LP tokens so the pair records those balances as its initial reserves.
         address pairAB = _seedPair(tokenA, tokenB, 10_000, 10_000);
 
@@ -121,7 +121,7 @@ contract UniswapV2Router02UnitTest is Test {
         tokenA.transfer(pairAB, amounts[0]);
 
         // 4. Execute the swap
-        // The harness calls _swap, which requests 906 B from the pair. 
+        // The harness calls _swap, which requests 906 B from the pair.
         // Since this is the only hop, the pair sends B directly to recipient.
         router.exposedSwap(amounts, path, recipient);
 
@@ -130,7 +130,7 @@ contract UniswapV2Router02UnitTest is Test {
         assertEq(tokenB.balanceOf(pairAB), 9_094); // The pair has 9,094 B (10,000 - 906)
     }
 
-    // Checks that _swap sends the intermediate token B directly from the A/B pair to the B/C pair, 
+    // Checks that _swap sends the intermediate token B directly from the A/B pair to the B/C pair,
     // then sends the final token C to the recipient.
     function test_SwapTwoHopsSendsTokenBToNextPairAndTokenCToRecipient() public {
         // 1. Seed both pairs
@@ -154,7 +154,7 @@ contract UniswapV2Router02UnitTest is Test {
 
         // 3. Fund the first pair
         tokenA.transfer(pairAB, amounts[0]);
-        
+
         // 4. Call the swap
         router.exposedSwap(amounts, path, recipient);
 

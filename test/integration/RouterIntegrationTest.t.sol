@@ -8,6 +8,7 @@ import {UniswapV2Router02} from "../../src/v2-periphery/UniswapV2Router02.sol";
 import {IUniswapV2Router02} from "../../src/v2-periphery/interfaces/IUniswapV2Router02.sol";
 import {UniswapV2Library} from "../../src/v2-periphery/libraries/UniswapV2Library.sol";
 import {MockERC20} from "../mocks/MockERC20.sol";
+import {MockFeeOnTransferERC20} from "../mocks/MockFeeOnTransferERC20.sol";
 import {MockWETH} from "../mocks/MockWETH.sol";
 
 contract RouterIntegrationTest is Test {
@@ -29,8 +30,8 @@ contract RouterIntegrationTest is Test {
         tokenC = new MockERC20(address(this), 10_000 ether, 18);
         weth = new MockWETH();
         factory = new UniswapV2Factory(address(this));
-        router = new UniswapV2Router02(address(factory), address(weth));        
-    }    
+        router = new UniswapV2Router02(address(factory), address(weth));
+    }
 
     function _seedSwapPair(MockERC20 firstToken, MockERC20 secondToken, uint256 firstAmount, uint256 secondAmount)
         internal
@@ -74,14 +75,21 @@ contract RouterIntegrationTest is Test {
         tokenA.approve(address(router), 2_000 ether);
         tokenB.approve(address(router), 8_000 ether);
         router.addLiquidity(
-            address(tokenA), address(tokenB), 2_000 ether, 8_000 ether, 2_000 ether, 8_000 ether, address(this), block.timestamp
+            address(tokenA),
+            address(tokenB),
+            2_000 ether,
+            8_000 ether,
+            2_000 ether,
+            8_000 ether,
+            address(this),
+            block.timestamp
         );
         address pair = factory.getPair(address(tokenA), address(tokenB));
 
         // 2. Add Liquidity
         // The provider offers up to 100 A and 500 B, with minimums of 100 A and 400 B.
-        // At the pool’s ratio, 100 A requires 400 B, 
-        // so the router transfers 100 A and 400 B. 
+        // At the pool’s ratio, 100 A requires 400 B,
+        // so the router transfers 100 A and 400 B.
         // The other 100 B stays with the provider.
         tokenA.transfer(provider, 100 ether);
         tokenB.transfer(provider, 500 ether);
@@ -159,7 +167,7 @@ contract RouterIntegrationTest is Test {
         assertEq(tokenB.balanceOf(provider), 200 ether);
 
         // The provider has still half of the LP tokens (100)
-        assertEq(pair.balanceOf(provider), 100 ether - pair.MINIMUM_LIQUIDITY()); 
+        assertEq(pair.balanceOf(provider), 100 ether - pair.MINIMUM_LIQUIDITY());
     }
 
     //////////////////////////////////////////
@@ -169,9 +177,7 @@ contract RouterIntegrationTest is Test {
         // Seed the pair through the router and mint LP tokens to the provider.
         vm.deal(address(this), 4 ether);
         tokenA.approve(address(router), 16 ether);
-        router.addLiquidityETH{value: 4 ether}(
-            address(tokenA), 16 ether, 16 ether, 4 ether, provider, block.timestamp
-        );
+        router.addLiquidityETH{value: 4 ether}(address(tokenA), 16 ether, 16 ether, 4 ether, provider, block.timestamp);
         IUniswapV2Pair pair = IUniswapV2Pair(factory.getPair(address(tokenA), address(weth)));
         // The provider has almost 8 LP tokens (sqrt 4 x 16))
         assertEq(pair.balanceOf(provider), 8 ether - pair.MINIMUM_LIQUIDITY());
@@ -236,7 +242,7 @@ contract RouterIntegrationTest is Test {
 
         // The provider has withdrawn half of this tokens
         assertEq(amountA, 50 ether); // 100 ether / 2 = 50 ether
-        assertEq(amountB, 200 ether); // 400 ether / 2 = 200 ether 
+        assertEq(amountB, 200 ether); // 400 ether / 2 = 200 ether
         assertEq(tokenA.balanceOf(provider), 50 ether);
         assertEq(tokenB.balanceOf(provider), 200 ether);
 
@@ -290,26 +296,33 @@ contract RouterIntegrationTest is Test {
     ////////////////////////////////////////////////
     // Verifies that the router swaps exactly 1,000 token A for 2,000 token B and sends the output to a separate recipient address.
     function test_SwapExactTokensForTokensSingleHop() public {
-        uint256 amountIn = 1_000 ether;     
+        uint256 amountIn = 1_000 ether;
 
         // Uniswap’s 0.3% swap fee gives the 1,000 A input an effective value of 997 A for pricing.
         // The extepcted output is 4,000 × 997 / (997 + 997) = 2,000 B
-        uint256 expectedOut = 2_000 ether;  
-        
+        uint256 expectedOut = 2_000 ether;
+
         // 1. Seed the pool with 997 token A and 4,000 token B
         tokenA.approve(address(router), 997 ether);
         tokenB.approve(address(router), 4_000 ether);
         router.addLiquidity(
-            address(tokenA), address(tokenB), 997 ether, 4_000 ether, 997 ether, 4_000 ether, address(this), block.timestamp
+            address(tokenA),
+            address(tokenB),
+            997 ether,
+            4_000 ether,
+            997 ether,
+            4_000 ether,
+            address(this),
+            block.timestamp
         );
 
         // We are doing a swap token A -> token B
         address[] memory path = new address[](2);
         path[0] = address(tokenA);
-        path[1] = address(tokenB);        
+        path[1] = address(tokenB);
 
         // The test gives provider 1,001 A
-        tokenA.transfer(provider, amountIn + 1 ether);        
+        tokenA.transfer(provider, amountIn + 1 ether);
 
         // 2. Execute the swap
         // The provider swaps 1,000 token A and recipient receives the output (2,000 B)
@@ -334,20 +347,34 @@ contract RouterIntegrationTest is Test {
         uint256 amountIn = 1_000 ether;
         // The first hop yields 2,000 B. After the fee, 1,994 B buys half of the 3,000 C reserve.
         uint256 expectedTokenCOut = 1_500 ether;
-        
+
         // 1. Seed the pools
         // Seed the A/B pool with 997 token A and 4,000 token B
         tokenA.approve(address(router), 997 ether);
         tokenB.approve(address(router), 4_000 ether);
         router.addLiquidity(
-            address(tokenA), address(tokenB), 997 ether, 4_000 ether, 997 ether, 4_000 ether, address(this), block.timestamp
+            address(tokenA),
+            address(tokenB),
+            997 ether,
+            4_000 ether,
+            997 ether,
+            4_000 ether,
+            address(this),
+            block.timestamp
         );
 
         // Seed the B/C pool with 1,994 token B and 3,000 token C
         tokenB.approve(address(router), 1_994 ether);
         tokenC.approve(address(router), 3_000 ether);
         router.addLiquidity(
-            address(tokenB), address(tokenC), 1_994 ether, 3_000 ether, 1_994 ether, 3_000 ether, address(this), block.timestamp
+            address(tokenB),
+            address(tokenC),
+            1_994 ether,
+            3_000 ether,
+            1_994 ether,
+            3_000 ether,
+            address(this),
+            block.timestamp
         );
 
         address[] memory path = new address[](3);
@@ -410,7 +437,7 @@ contract RouterIntegrationTest is Test {
         uint256 amountInMax = 1_001 ether;
         // After the 0.3% fee, buying 2,000 B reserve takes 1,000 A plus one base unit for rounding.
         uint256 requiredA = 1_000 ether + 1;
-        
+
         // The test gives provider 1,001 A
         tokenA.transfer(provider, amountInMax);
 
@@ -422,7 +449,7 @@ contract RouterIntegrationTest is Test {
         vm.stopPrank();
 
         assertEq(amounts[0], requiredA);
-        assertEq(tokenA.balanceOf(provider), 1 ether - 1); // amountInMax - requiredA = 1,001 ether - (1,000 ether + 1) = 1 ether - 1 
+        assertEq(tokenA.balanceOf(provider), 1 ether - 1); // amountInMax - requiredA = 1,001 ether - (1,000 ether + 1) = 1 ether - 1
         assertEq(tokenB.balanceOf(recipient), amountOut); // recipient receives 2,000 token B
 
         address pairAB = factory.getPair(address(tokenA), address(tokenB));
@@ -443,9 +470,9 @@ contract RouterIntegrationTest is Test {
         path[1] = address(tokenB);
         path[2] = address(tokenC);
 
-        // 2. Calculate backward. 
-        // To get 1,500 C from B/C, the router needs 2,000 ether + 1 of B (requiredB). 
-        // To get that much B from A/B, it needs 1,000 ether + 2 of A (requiredA). 
+        // 2. Calculate backward.
+        // To get 1,500 C from B/C, the router needs 2,000 ether + 1 of B (requiredB).
+        // To get that much B from A/B, it needs 1,000 ether + 2 of A (requiredA).
         // The + 1 and + 2 are base units from the exact-output calculation.
 
         uint256 amountOut = 1_500 ether;
@@ -469,7 +496,7 @@ contract RouterIntegrationTest is Test {
 
         assertEq(amounts[0], requiredA); //  1,000 ether + 2
         assertEq(amounts[1], requiredB); // 2,000 ether + 1
-        assertEq(tokenA.balanceOf(provider), amountInMax - requiredA); // 1_001 ether - (1_000 ether + 2) = 1 ether - 2 
+        assertEq(tokenA.balanceOf(provider), amountInMax - requiredA); // 1_001 ether - (1_000 ether + 2) = 1 ether - 2
         assertEq(tokenC.balanceOf(recipient), amountOut); // 1,500 ether
 
         // The A/B pool sends B directly to the B/C pool.
@@ -496,29 +523,27 @@ contract RouterIntegrationTest is Test {
         path[0] = address(weth);
         path[1] = address(tokenA);
 
-        // 2. Calculate the expected output. 
-        // For pricing, Uniswap V2 applies a 0.3% fee to the 1 ETH input. 
-        // That gives an effective input of 0.997 WETH, exactly equal to the starting WETH reserve. 
+        // 2. Calculate the expected output.
+        // For pricing, Uniswap V2 applies a 0.3% fee to the 1 ETH input.
+        // That gives an effective input of 0.997 WETH, exactly equal to the starting WETH reserve.
         // The swap formula then gives 400 × 0.997 / (0.997 + 0.997) = 200 token A.
 
         uint256 expectedOut = 200 ether;
         vm.deal(provider, 1 ether);
         vm.prank(provider);
         // The provider wants to swap 1 ETH and sets the minimum output to 200 token A that recipient will receive
-        uint256[] memory amounts = router.swapExactETHForTokens{value: 1 ether}(
-            expectedOut, path, recipient, block.timestamp
-        );
+        uint256[] memory amounts =
+            router.swapExactETHForTokens{value: 1 ether}(expectedOut, path, recipient, block.timestamp);
 
         assertEq(amounts[0], 1 ether);
         assertEq(amounts[1], expectedOut); // 200 token A
         assertEq(provider.balance, 0); // The provider spent all his ETH
         assertEq(tokenA.balanceOf(recipient), expectedOut); // The recipient recieves 200 token A
-        
+
         address pair = factory.getPair(address(weth), address(tokenA));
         assertEq(weth.balanceOf(pair), 1.997 ether); // 0.997 WETH initially plus 1 WETH from the swap
         assertEq(tokenA.balanceOf(pair), 400 ether - expectedOut); // 400 ether - 200 ether
     }
-
 
     /////////////////////////////////////////////
     //           swapTokensForExactETH         //
@@ -596,5 +621,30 @@ contract RouterIntegrationTest is Test {
         uint256 requiredETH = 1 ether + 1;
         assertEq(tokenA.balanceOf(recipient), amountOut);
         assertEq(provider.balance, ethBudget - requiredETH);
+    }
+
+    /////////////////////////////////////////////////////////////////////////////
+    //           swapExactTokensForTokensSupportingFeeOnTransferTokens         //
+    /////////////////////////////////////////////////////////////////////////////
+    function test_SwapExactTokensForTokensSupportingFeeOnTransferTokensSingleHop() public {
+        MockFeeOnTransferERC20 feeOnTransferToken = new MockFeeOnTransferERC20(address(this), 2_000 ether, 18);
+        // The pair starts with 987.03 feeOnTransferToken tokens after the 1% transfer fee and 2,000 token A.
+        _seedSwapPair(feeOnTransferToken, tokenA, 997 ether, 2_000 ether);
+
+        address[] memory path = new address[](2);
+        path[0] = address(feeOnTransferToken);
+        path[1] = address(tokenA);
+        feeOnTransferToken.approve(address(router), 1_000 ether);
+
+        // The pair receives 990 input tokens.
+        // The pair sends 1,000 token A reserve to the recipient.
+        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            1_000 ether, 1_000 ether, path, recipient, block.timestamp
+        );
+
+        address pair = factory.getPair(address(feeOnTransferToken), address(tokenA));
+        assertEq(feeOnTransferToken.balanceOf(pair), 987.03 ether + 990 ether); // Initial reserve (987.03 ether) + deposited during the swap (990)
+        assertEq(tokenA.balanceOf(pair), 1_000 ether); // inital reserve 2,000 - 1,000 sent during the swap
+        assertEq(tokenA.balanceOf(recipient), 1_000 ether); // The recipient has recived the 1,000 token A
     }
 }
